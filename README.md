@@ -32,7 +32,7 @@ La app queda en una URL tipo:
 ## Límites configurables
 En `app.py` línea 47:
 ```python
-LIMITE_ARCHIVOS = 30  # máximo archivos por sesión
+LIMITE_ARCHIVOS = 20  # máximo archivos por sesión
 ```
 
 ## Tipos de documento reconocidos
