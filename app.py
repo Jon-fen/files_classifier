@@ -84,7 +84,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Límite de archivos ────────────────────────────────────────
-LIMITE_ARCHIVOS = 30
+LIMITE_ARCHIVOS = 20
 
 # ── API Key desde secrets o input manual ─────────────────────
 api_key = None
