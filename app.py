@@ -84,7 +84,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Límite de archivos ────────────────────────────────────────
-LIMITE_ARCHIVOS = 20
+LIMITE_ARCHIVOS = 30
 
 # ── API Key desde secrets o input manual ─────────────────────
 api_key = None
@@ -216,7 +216,8 @@ Responde ÚNICAMENTE con JSON válido, sin markdown, sin explicaciones.
   "hora"              : "HH:MM solo para No Marcacion, si no null",
   "entrada_salida"    : "ENTRADA o SALIDA solo para No Marcacion, si no null",
   "dias"              : número entero del documento o null,
-  "numero_resolucion" : "número si tipo=Resolucion, si no null"
+  "numero_resolucion" : "número si tipo=Resolucion, si no null",
+  "confianza"         : "ALTA, MEDIA o BAJA según qué tan claro es el documento"
 }
 SOLO el JSON.
 """
@@ -306,22 +307,27 @@ def generar_nombre_estandarizado(d):
     return nombre_final[:196] + '.pdf' if len(nombre_final) > 200 else nombre_final
 
 def pdf_a_imagen_base64(path):
+    """Retorna lista de imágenes base64 (máximo 2 páginas)."""
     doc = fitz.open(path)
-    pix = doc[0].get_pixmap(matrix=fitz.Matrix(120/72, 120/72))
-    img = base64.standard_b64encode(pix.tobytes('png')).decode('utf-8')
+    imagenes = []
+    for n in range(min(2, len(doc))):
+        pix = doc[n].get_pixmap(matrix=fitz.Matrix(120/72, 120/72))
+        imagenes.append(base64.standard_b64encode(pix.tobytes('png')).decode('utf-8'))
     doc.close()
-    return img
+    return imagenes
 
-def clasificar(client_ai, img_b64):
+def clasificar(client_ai, imagenes):
+    """imagenes: lista de strings base64 (1 o 2 páginas)."""
     for intento in range(1, 4):
         try:
+            contenido = []
+            for img_b64 in imagenes:
+                contenido.append({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': img_b64}})
+            contenido.append({'type': 'text', 'text': PROMPT})
             r = client_ai.messages.create(
                 model='claude-haiku-4-5-20251001',
                 max_tokens=1024,
-                messages=[{'role': 'user', 'content': [
-                    {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': img_b64}},
-                    {'type': 'text', 'text': PROMPT}
-                ]}]
+                messages=[{'role': 'user', 'content': contenido}]
             )
             texto = r.content[0].text.strip()
             texto = re.sub(r'^```[a-z]*\s*|\s*```$', '', texto, flags=re.MULTILINE).strip()
@@ -390,8 +396,8 @@ if st.button("🚀 Clasificar documentos", type="primary", use_container_width=T
             status.markdown(f"⏳ Procesando `{nombre_orig}` ({i+1}/{total})...")
 
             try:
-                img_b64 = pdf_a_imagen_base64(pdf_path)
-                datos   = clasificar(client_ai, img_b64)
+                imagenes = pdf_a_imagen_base64(pdf_path)
+                datos    = clasificar(client_ai, imagenes)
 
                 if datos is None:
                     nuevo = f'REVISAR_{nombre_orig}'
@@ -415,7 +421,9 @@ if st.button("🚀 Clasificar documentos", type="primary", use_container_width=T
 
                     log.append({'original': nombre_orig, 'nuevo': os.path.basename(dest),
                                 'datos': datos, 'estado': estado,
-                                'dias_doc': dias_doc, 'dias_calc': dias_calc})
+                                'dias_doc': dias_doc, 'dias_calc': dias_calc,
+                                'confianza': datos.get('confianza', 'ALTA'),
+                                'paginas': len(imagenes)})
 
             except Exception as e:
                 nuevo = f'REVISAR_{nombre_orig}'
@@ -449,11 +457,17 @@ if st.button("🚀 Clasificar documentos", type="primary", use_container_width=T
             if r['estado'] == 'OK':               badge, cls = '✅ OK', 'badge-ok'
             elif r['estado'] == 'OK_REVISAR_DIAS': badge, cls = '🟡 REVISAR DÍAS', 'badge-warn'
             else:                                  badge, cls = '❌ FALLIDO', 'badge-err'
-            tipo_str = r.get('datos', {}).get('tipo', '') if 'datos' in r else ''
+            tipo_str      = r.get('datos', {}).get('tipo', '') if 'datos' in r else ''
+            confianza     = r.get('confianza', '')
+            paginas       = r.get('paginas', 1)
+            conf_color    = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#888')
+            conf_html     = f'&nbsp;·&nbsp;<span style="color:{conf_color};font-size:0.75rem">⬤ {confianza}</span>' if confianza else ''
+            pag_html      = f'&nbsp;·&nbsp;<span style="color:#555;font-size:0.75rem">{paginas}p</span>' if paginas > 1 else ''
             st.markdown(f"""
             <div class="result-row">
                 <span class="{cls}">{badge}</span>
                 {'&nbsp;·&nbsp;<span style="color:#aaa">' + tipo_str + '</span>' if tipo_str else ''}
+                {conf_html}{pag_html}
                 <br>
                 <span style="color:#666">↳</span> {r.get('nuevo', r['original'])}
             </div>
