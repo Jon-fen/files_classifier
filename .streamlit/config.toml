@@ -1,6 +1,6 @@
 [server]
 maxUploadSize = 50
-primaryColor = "#4f9cf9"
-backgroundColor = "#0f1117"
-secondaryBackgroundColor = "#1a1f2e"
-textColor = "#e8e8e8"
+primaryColor = "#005f9e"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f4f8"
+textColor = "#1a1a1a"
