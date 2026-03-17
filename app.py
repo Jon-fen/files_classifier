@@ -311,7 +311,7 @@ def pdf_a_imagen_base64(path):
     doc = fitz.open(path)
     imagenes = []
     for n in range(min(2, len(doc))):
-        pix = doc[n].get_pixmap(matrix=fitz.Matrix(120/72, 120/72))
+        pix = doc[n].get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
         imagenes.append(base64.standard_b64encode(pix.tobytes('png')).decode('utf-8'))
     doc.close()
     return imagenes
@@ -326,7 +326,7 @@ def clasificar(client_ai, imagenes):
             contenido.append({'type': 'text', 'text': PROMPT})
             r = client_ai.messages.create(
                 model='claude-haiku-4-5-20251001',
-                max_tokens=1024,
+                max_tokens=400,
                 messages=[{'role': 'user', 'content': contenido}]
             )
             texto = r.content[0].text.strip()
