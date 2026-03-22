@@ -46,11 +46,12 @@ st.markdown("""
         border: 1px solid #1e3a5f;
         border-left: 3px solid #22d3ee;
         border-radius: 8px;
-        padding: 1rem 1.2rem;
-        font-size: 0.78rem;
+        padding: 1.1rem 1.4rem;
+        font-size: 0.88rem;
         color: #94a3b8;
-        margin-bottom: 1.2rem;
-        line-height: 1.6;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        line-height: 1.75;
     }
     .privacy-block strong { color: #22d3ee; }
     .privacy-block a { color: #22d3ee; text-decoration: none; }
@@ -210,12 +211,13 @@ with st.sidebar:
 
     # Ko-fi en sidebar
     st.markdown("""
-    <div style="font-size:0.75rem; color:#64748b; text-align:center; line-height:1.6;">
-        Esta app usa créditos de API con costo real.<br>
-        Si te fue útil, puedes colaborar:<br>
+    <div style="background:#1a2540; border:1px solid #fb923c; border-radius:8px; padding:0.9rem 1rem; text-align:center; line-height:1.7;">
+        <div style="font-size:0.82rem; color:#94a3b8; margin-bottom:0.4rem;">
+            Esta app usa créditos de API con costo real.
+        </div>
         <a href="https://ko-fi.com/analyzethis" target="_blank"
-           style="color:#fb923c; font-weight:600; text-decoration:none;">
-            ☕ Ko-fi — Invítame un café
+           style="color:#fb923c; font-weight:700; text-decoration:none; font-size:1rem;">
+            ☕ Invítame un café
         </a>
     </div>
     """, unsafe_allow_html=True)
@@ -243,21 +245,6 @@ st.markdown("""
         Renombra lotes de PDFs escaneados automáticamente usando visión de IA.<br>
         Extrae tipo de documento, nombre, fecha y genera nombres estandarizados.
     </p>
-</div>
-""", unsafe_allow_html=True)
-
-# ── Bloque de privacidad ──────────────────────────────────────
-st.markdown("""
-<div class="privacy-block">
-    🔒 <strong>Privacidad y datos:</strong>
-    Esta herramienta usa la <strong>API comercial de Anthropic</strong> (no la versión de consumo).
-    Según su política oficial: <em>"By default, we will not use your inputs or outputs from our
-    commercial products (e.g. Anthropic API) to train our models."</em>
-    — <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank">
-    Anthropic Privacy Center</a><br>
-    Los archivos se procesan solo en memoria y <strong>no se almacenan en ningún servidor propio</strong>.
-    Solo se lee la <strong>primera página</strong> de cada PDF. Aun así, evita subir documentos con
-    datos sensibles innecesariamente y actúa según las políticas de tu organización.
 </div>
 """, unsafe_allow_html=True)
 
@@ -291,6 +278,21 @@ st.markdown("""
     }
 })();
 </script>
+""", unsafe_allow_html=True)
+
+# ── Bloque de privacidad (debajo del uploader) ────────────────
+st.markdown("""
+<div class="privacy-block">
+    🔒 <strong>Privacidad y datos:</strong>
+    Esta herramienta usa la <strong>API comercial de Anthropic</strong> (no la versión de consumo).
+    Según su política oficial: <em>"By default, we will not use your inputs or outputs from our
+    commercial products (e.g. Anthropic API) to train our models."</em>
+    — <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank">
+    Anthropic Privacy Center</a><br>
+    Los archivos se procesan <strong>solo en memoria</strong> y no se almacenan en ningún servidor propio.
+    Solo se lee la <strong>primera página</strong> de cada PDF.
+    Aun así, actúa siempre según las políticas de privacidad de tu organización.
+</div>
 """, unsafe_allow_html=True)
 
 if not archivos:
@@ -626,9 +628,14 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
     # ── Ko-fi footer ──────────────────────────────────────────
     st.markdown("""
-    <div class="kofi-banner">
-        Esta app tiene un costo real de API. Si te ahorró tiempo,
-        <a href="https://ko-fi.com/analyzethis" target="_blank">☕ invítame un café en Ko-fi</a>
-        para seguir manteniéndola. Gracias 🙏
+    <div class="kofi-banner" style="border-color:#fb923c; padding:1.1rem 1.4rem;">
+        <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.5rem;">
+            Esta app tiene un costo real de API. Si te ahorró tiempo:
+        </div>
+        <a href="https://ko-fi.com/analyzethis" target="_blank"
+           style="color:#fb923c; font-weight:700; font-size:1rem; text-decoration:none;">
+            ☕ Invítame un café en Ko-fi
+        </a>
+        <div style="font-size:0.75rem; color:#475569; margin-top:0.4rem;">Gracias 🙏</div>
     </div>
     """, unsafe_allow_html=True)
