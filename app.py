@@ -119,6 +119,35 @@ st.markdown("""
         margin-left: 0.5rem;
         vertical-align: middle;
     }
+    /* ── Ocultar texto nativo del file uploader ── */
+    [data-testid="stFileUploaderDropzoneInstructions"] > div > span,
+    [data-testid="stFileUploaderDropzoneInstructions"] > div > small {
+        display: none !important;
+    }
+    /* Inyectar texto en español vía pseudo-elementos */
+    [data-testid="stFileUploaderDropzoneInstructions"] > div::before {
+        content: "Arrastra los archivos aquí";
+        display: block;
+        font-size: 0.9rem;
+        color: #94a3b8;
+        font-family: 'IBM Plex Sans', sans-serif;
+        margin-bottom: 0.3rem;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"] > div::after {
+        content: "Límite 50 MB por archivo · PDF";
+        display: block;
+        font-size: 0.75rem;
+        color: #475569;
+        font-family: 'IBM Plex Sans', sans-serif;
+    }
+    /* Botón "Browse files" → traducir no es posible, pero lo podemos estilizar */
+    [data-testid="stFileUploaderDropzone"] button {
+        background: #1e3a5f !important;
+        color: #93c5fd !important;
+        border: 1px solid #2563eb !important;
+        border-radius: 6px !important;
+        font-size: 0.78rem !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -247,6 +276,22 @@ archivos = st.file_uploader(
     accept_multiple_files=True,
     label_visibility="collapsed"
 )
+
+# Renombrar botón nativo "Browse files" → "Explorar archivos" vía JS
+st.markdown("""
+<script>
+(function tryRename() {
+    const btns = window.parent.document.querySelectorAll(
+        '[data-testid="stFileUploaderDropzone"] button'
+    );
+    if (btns.length > 0) {
+        btns.forEach(b => { if (b.innerText.includes('Browse')) b.innerText = 'Seleccionar archivos'; });
+    } else {
+        setTimeout(tryRename, 300);
+    }
+})();
+</script>
+""", unsafe_allow_html=True)
 
 if not archivos:
     st.markdown("""
@@ -583,7 +628,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     st.markdown("""
     <div class="kofi-banner">
         Esta app tiene un costo real de API. Si te ahorró tiempo,
-        <a href="https://ko-fi.com/TU_USUARIO" target="_blank">☕ invítame un café en Ko-fi</a>
+        <a href="https://ko-fi.com/analyzethis" target="_blank">☕ invítame un café en Ko-fi</a>
         para seguir manteniéndola. Gracias 🙏
     </div>
     """, unsafe_allow_html=True)
