@@ -2,14 +2,12 @@ import streamlit as st
 import anthropic
 import fitz
 import extract_msg
-import holidays
 import json, re, time, base64, os, shutil, zipfile, tempfile
-from datetime import date, timedelta
 from pathlib import Path
 
 # ── Configuración de página ───────────────────────────────────
 st.set_page_config(
-    page_title="Clasificador de Documentos",
+    page_title="DocRename AI",
     page_icon="📄",
     layout="centered"
 )
@@ -26,465 +24,566 @@ st.markdown("""
         font-family: 'IBM Plex Mono', monospace !important;
     }
     .stApp {
-        background-color: #0f1117;
-        color: #e8e8e8;
+        background-color: #111827;
+        color: #e2e8f0;
+    }
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0d1321 !important;
+        border-right: 1px solid #1e2d45;
     }
     .header-block {
-        background: linear-gradient(135deg, #1a1f2e 0%, #0f1117 100%);
-        border: 1px solid #2a3040;
-        border-left: 4px solid #4f9cf9;
+        background: linear-gradient(135deg, #1a2540 0%, #111827 100%);
+        border: 1px solid #1e2d45;
+        border-left: 4px solid #3b82f6;
         padding: 1.5rem 2rem;
-        border-radius: 8px;
-        margin-bottom: 2rem;
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     }
+    .privacy-block {
+        background: #0d1321;
+        border: 1px solid #1e3a5f;
+        border-left: 3px solid #22d3ee;
+        border-radius: 8px;
+        padding: 1rem 1.2rem;
+        font-size: 0.78rem;
+        color: #94a3b8;
+        margin-bottom: 1.2rem;
+        line-height: 1.6;
+    }
+    .privacy-block strong { color: #22d3ee; }
+    .privacy-block a { color: #22d3ee; text-decoration: none; }
     .stat-box {
-        background: #1a1f2e;
-        border: 1px solid #2a3040;
-        border-radius: 6px;
+        background: #1a2540;
+        border: 1px solid #1e2d45;
+        border-radius: 8px;
         padding: 1rem;
         text-align: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }
     .stat-num { font-size: 2rem; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
     .stat-ok   { color: #4ade80; }
     .stat-warn { color: #facc15; }
     .stat-err  { color: #f87171; }
-    .stat-label { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+    .stat-label { font-size: 0.72rem; color: #64748b; margin-top: 0.2rem; letter-spacing: 0.05em; text-transform: uppercase; }
     .result-row {
-        background: #1a1f2e;
-        border: 1px solid #2a3040;
-        border-radius: 6px;
+        background: #1a2540;
+        border: 1px solid #1e2d45;
+        border-radius: 8px;
         padding: 0.75rem 1rem;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.4rem;
         font-family: 'IBM Plex Mono', monospace;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        transition: border-color 0.2s;
     }
+    .result-row:hover { border-color: #3b82f6; }
     .badge-ok   { color: #4ade80; }
-    .badge-warn { color: #facc15; }
     .badge-err  { color: #f87171; }
     .limit-note {
-        background: #1a1f2e;
-        border: 1px solid #facc15;
-        border-radius: 6px;
+        background: #1a2540;
+        border: 1px solid #2d3d55;
+        border-radius: 8px;
         padding: 0.6rem 1rem;
-        font-size: 0.8rem;
-        color: #facc15;
+        font-size: 0.78rem;
+        color: #94a3b8;
         margin-bottom: 1rem;
+    }
+    .kofi-banner {
+        background: #1a2540;
+        border: 1px solid #2d3d55;
+        border-radius: 8px;
+        padding: 0.8rem 1rem;
+        font-size: 0.78rem;
+        color: #94a3b8;
+        text-align: center;
+        margin-top: 1.5rem;
+    }
+    .kofi-banner a { color: #fb923c; text-decoration: none; font-weight: 600; }
+    .kofi-banner a:hover { text-decoration: underline; }
+    .section-divider {
+        border: none;
+        border-top: 1px solid #1e2d45;
+        margin: 1.5rem 0;
+    }
+    .version-tag {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.68rem;
+        color: #3b82f6;
+        background: #1a2540;
+        border: 1px solid #1e3a5f;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        display: inline-block;
+        margin-left: 0.5rem;
+        vertical-align: middle;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div style="padding: 0.5rem 0 1rem 0;">
+        <p style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#3b82f6; letter-spacing:0.1em; margin:0;">
+            CONFIGURACIÓN
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # API Key
+    api_key = None
+    if "ANTHROPIC_API_KEY" in st.secrets:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+        st.success("✅ API Key configurada en Secrets")
+    else:
+        api_key = st.text_input(
+            "🔑 API Key de Anthropic",
+            type="password",
+            placeholder="sk-ant-...",
+            help="Obtén tu key en console.anthropic.com"
+        )
+
+    st.markdown("---")
+
+    # Tipo de archivo
+    tipo_archivo = st.radio(
+        "Tipo de entrada",
+        ["📄 PDFs directamente", "📨 Correos .MSG (con PDFs adjuntos)"],
+        help="Los .MSG son correos de Outlook que contienen PDFs adjuntos."
+    )
+    es_msg = tipo_archivo.startswith("📨")
+
+    st.markdown("---")
+
+    # Límite
+    LIMITE_ARCHIVOS = st.slider(
+        "Límite de archivos por sesión",
+        min_value=5, max_value=50, value=30, step=5
+    )
+
+    st.markdown("---")
+
+    # Info técnica
+    st.markdown("""
+    <div style="font-size:0.72rem; color:#475569; line-height:1.7;">
+        <p style="margin:0 0 0.3rem 0; color:#64748b; font-weight:600;">Modelo</p>
+        <p style="margin:0; font-family:'IBM Plex Mono',monospace;">claude-haiku-4-5</p>
+        <p style="margin:0.6rem 0 0.3rem 0; color:#64748b; font-weight:600;">Páginas leídas</p>
+        <p style="margin:0;">Solo la primera página de cada PDF</p>
+        <p style="margin:0.6rem 0 0.3rem 0; color:#64748b; font-weight:600;">Resolución</p>
+        <p style="margin:0;">90 DPI (optimizado para tokens)</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Ko-fi en sidebar
+    st.markdown("""
+    <div style="font-size:0.75rem; color:#64748b; text-align:center; line-height:1.6;">
+        Esta app usa créditos de API con costo real.<br>
+        Si te fue útil, puedes colaborar:<br>
+        <a href="https://ko-fi.com/analyzethis" target="_blank"
+           style="color:#fb923c; font-weight:600; text-decoration:none;">
+            ☕ Ko-fi — Invítame un café
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # GitHub
+    st.markdown("""
+    <div style="font-size:0.72rem; color:#64748b; text-align:center;">
+        <a href="https://github.com/Jon-fen/files_classifier" target="_blank"
+           style="color:#64748b; text-decoration:none;">
+            🔗 Código abierto en GitHub
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ── Header principal ──────────────────────────────────────────
 st.markdown("""
 <div class="header-block">
-    <h1 style="margin:0; font-size:1.4rem; color:#4f9cf9;">📄 CLASIFICADOR DE DOCUMENTOS</h1>
-    <p style="margin:0.3rem 0 0 0; color:#888; font-size:0.85rem;">
-        Hospital Dr. Guillermo Grant Benavente · Anthropic Claude Haiku
+    <h1 style="margin:0; font-size:1.35rem; color:#e2e8f0; letter-spacing:0.02em;">
+        📄 DocRename AI
+        <span class="version-tag">v1.3 beta</span>
+    </h1>
+    <p style="margin:0.4rem 0 0 0; color:#64748b; font-size:0.82rem;">
+        Renombra lotes de PDFs escaneados automáticamente usando visión de IA.<br>
+        Extrae tipo de documento, nombre, fecha y genera nombres estandarizados.
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Límite de archivos ────────────────────────────────────────
-LIMITE_ARCHIVOS = 30
+# ── Bloque de privacidad ──────────────────────────────────────
+st.markdown("""
+<div class="privacy-block">
+    🔒 <strong>Privacidad y datos:</strong>
+    Esta herramienta usa la <strong>API comercial de Anthropic</strong> (no la versión de consumo).
+    Según su política oficial: <em>"By default, we will not use your inputs or outputs from our
+    commercial products (e.g. Anthropic API) to train our models."</em>
+    — <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank">
+    Anthropic Privacy Center</a><br>
+    Los archivos se procesan solo en memoria y <strong>no se almacenan en ningún servidor propio</strong>.
+    Solo se lee la <strong>primera página</strong> de cada PDF. Aun así, evita subir documentos con
+    datos sensibles innecesariamente y actúa según las políticas de tu organización.
+</div>
+""", unsafe_allow_html=True)
 
-# ── API Key desde secrets o input manual ─────────────────────
-api_key = None
-if "ANTHROPIC_API_KEY" in st.secrets:
-    api_key = st.secrets["ANTHROPIC_API_KEY"]
-else:
-    api_key = st.text_input(
-        "🔑 API Key de Anthropic",
-        type="password",
-        placeholder="sk-ant-...",
-        help="Obtén tu key en console.anthropic.com"
-    )
-
+# ── Validación API key ────────────────────────────────────────
 if not api_key:
-    st.info("Ingresa tu API Key de Anthropic para continuar.")
+    st.info("👈 Ingresa tu API Key de Anthropic en el panel lateral para continuar.")
     st.stop()
 
-# ── Tipo de archivo ───────────────────────────────────────────
-tipo_archivo = st.radio(
-    "Tipo de archivos a procesar",
-    ["📨 Correos .MSG (con PDFs adjuntos)", "📄 PDFs directamente"],
-    horizontal=True
-)
-es_msg = tipo_archivo.startswith("📨")
-
 # ── Upload ────────────────────────────────────────────────────
-st.markdown(f'<div class="limit-note">⚠️ Límite: máximo {LIMITE_ARCHIVOS} archivos por sesión</div>', unsafe_allow_html=True)
-
 ext = "msg" if es_msg else "pdf"
+st.markdown(f'<div class="limit-note">📁 Sube hasta <strong>{LIMITE_ARCHIVOS} archivos</strong> .{ext.upper()} por sesión</div>', unsafe_allow_html=True)
+
 archivos = st.file_uploader(
-    f"Sube tus archivos .{ext.upper()}",
+    f"Arrastra o selecciona archivos .{ext.upper()}",
     type=[ext],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    label_visibility="collapsed"
 )
 
 if not archivos:
+    st.markdown("""
+    <div style="text-align:center; padding: 2rem; color:#334155; font-size:0.85rem;">
+        ↑ Sube archivos para comenzar
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
 if len(archivos) > LIMITE_ARCHIVOS:
-    st.error(f"❌ Subiste {len(archivos)} archivos. El límite es {LIMITE_ARCHIVOS} por sesión.")
+    st.error(f"❌ Subiste {len(archivos)} archivos. El límite configurado es {LIMITE_ARCHIVOS}.")
     st.stop()
 
-st.success(f"✅ {len(archivos)} archivo(s) recibidos")
+st.success(f"✅ {len(archivos)} archivo(s) cargados — listos para clasificar")
 
-# ── Lógica de procesamiento ───────────────────────────────────
-
-def get_feriados_chile(año):
-    return holidays.Chile(years=año)
-
-def contar_dias_habiles(desde_str, hasta_str):
-    try:
-        desde = date.fromisoformat(desde_str)
-        hasta = date.fromisoformat(hasta_str)
-        feriados_cl = {}
-        for año in set(range(desde.year, hasta.year + 1)):
-            feriados_cl.update(get_feriados_chile(año))
-        count, d = 0, desde
-        while d <= hasta:
-            if d.weekday() < 5 and d not in feriados_cl:
-                count += 1
-            d += timedelta(days=1)
-        return count
-    except: return None
-
-def contar_dias_corridos(desde_str, hasta_str):
-    try:
-        return (date.fromisoformat(hasta_str) - date.fromisoformat(desde_str)).days + 1
-    except: return None
-
-def validar_dias(datos):
-    tipo     = datos.get('tipo', '')
-    dias_doc = datos.get('dias')
-    f_desde  = datos.get('fecha_desde')
-    f_hasta  = datos.get('fecha_hasta')
-    if not f_desde or not dias_doc:
-        return dias_doc, None, None, 'Sin datos suficientes'
-    f_hasta_real = f_hasta or f_desde
-    if tipo in ('Feriado Legal', 'Permiso Administrativo'):
-        dias_calc = contar_dias_habiles(f_desde, f_hasta_real)
-        modo = 'días hábiles'
-    elif tipo == 'Permiso Sin Goce':
-        dias_calc = contar_dias_corridos(f_desde, f_hasta_real)
-        modo = 'días corridos'
-    else:
-        return dias_doc, None, None, 'No aplica'
-    if dias_calc is None:
-        return dias_doc, None, None, 'Error al calcular'
-    return dias_doc, dias_calc, (int(dias_doc) == dias_calc), f'{modo}: doc={dias_doc}, calc={dias_calc}'
-
+# ── Prompt genérico ───────────────────────────────────────────
 PROMPT = """
-Analiza este documento administrativo o médico escaneado en español de un hospital o institución pública chilena.
+Analiza la primera página de este documento escaneado.
 
-Clasifica el tipo según estas categorías EXACTAS:
-- "No Marcacion"          : justificación de no marcación en reloj biométrico
-- "Feriado Legal"         : permiso por feriado legal (días hábiles)
-- "Permiso Administrativo": permiso administrativo (días hábiles)
-- "Permiso Sin Goce"      : permiso sin goce de sueldo (días corridos)
-- "Resolucion"            : resolución oficial numerada
-- "Audiometria"           : examen o informe de audiometría
-- "Audioimped"            : examen o informe de audioimped (impedanciometría)
-- "Otro"                  : cualquier otro tipo no listado
+Tu tarea: identificar los datos clave para generar un nombre de archivo estandarizado.
 
-════════════════════════════════════════════════
-REGLA CRÍTICA SOBRE FECHAS:
-════════════════════════════════════════════════
-1. "fecha_solicitud" → Cuando pidió el permiso. ⚠️ NO usar para el nombre.
-2. "fecha_desde"     → Primer día EFECTIVO. ✅ Fecha principal.
-3. "fecha_hasta"     → Último día EFECTIVO. ✅ Incluir si aparece.
+Extrae la siguiente información con máxima precisión:
 
-Para No Marcación: fecha efectiva = día en que no marcó.
-Para exámenes: fecha efectiva = fecha del examen.
-Si solo hay una fecha, asúmela como fecha_desde.
-════════════════════════════════════════════════
+1. TIPO DE DOCUMENTO: Identifica el tipo en 1-3 palabras descriptivas en español.
+   Ejemplos: "Permiso", "Certificado Medico", "Resolucion", "Contrato", "Informe",
+   "Licencia", "Solicitud", "Oficio", "Memorandum", "Formulario", "Factura", etc.
+   Sé específico si puedes (ej: "Licencia Medica" mejor que solo "Licencia").
 
-SOBRE DÍAS: Extrae el valor EXACTO del campo "Cantidad de días".
-NO calcules — solo lo que dice el documento. Si no aparece, usa null.
+2. NOMBRE DE PERSONA: El nombre completo del titular o destinatario principal.
+   Formato: APELLIDO NOMBRE en mayúsculas. Si no hay persona identificable, usa null.
 
-SOBRE SUBTIPO: Si tipo es "Otro", describe el documento en 2-3 palabras
-descriptivas en español (ej: Certificado Medico, Licencia Medica, Contrato Honorarios).
+3. FECHA PRINCIPAL: La fecha más relevante del documento (emisión, vigencia o evento).
+   Formato ISO: YYYY-MM-DD. Si hay rango, extrae fecha_desde y fecha_hasta.
 
-Responde ÚNICAMENTE con JSON válido, sin markdown, sin explicaciones.
+4. NÚMERO O CÓDIGO: Si el documento tiene folio, número, código o resolución, extráelo.
+
+5. CONFIANZA: Qué tan legible y claro es el documento (ALTA / MEDIA / BAJA).
+
+Responde ÚNICAMENTE con JSON válido, sin markdown, sin explicaciones:
 {
-  "tipo"              : "categoría exacta",
-  "subtipo"           : "descripción 2-3 palabras si tipo=Otro, si no null",
-  "nombre"            : "APELLIDO NOMBRE en mayúsculas tal como aparece",
-  "fecha_solicitud"   : "YYYY-MM-DD o null",
-  "fecha_desde"       : "YYYY-MM-DD — día efectivo de inicio",
-  "fecha_hasta"       : "YYYY-MM-DD — día efectivo de término o null",
-  "hora"              : "HH:MM solo para No Marcacion, si no null",
-  "entrada_salida"    : "ENTRADA o SALIDA solo para No Marcacion, si no null",
-  "dias"              : número entero del documento o null,
-  "numero_resolucion" : "número si tipo=Resolucion, si no null",
-  "confianza"         : "ALTA, MEDIA o BAJA según qué tan claro es el documento"
+  "tipo"        : "tipo de documento en 1-3 palabras",
+  "nombre"      : "APELLIDO NOMBRE o null",
+  "fecha_desde" : "YYYY-MM-DD o null",
+  "fecha_hasta" : "YYYY-MM-DD o null si no hay rango",
+  "numero"      : "folio/número/código o null",
+  "confianza"   : "ALTA, MEDIA o BAJA"
 }
 SOLO el JSON.
 """
 
-def limpiar_nombre_persona(nombre, largo=35):
-    if not nombre: return 'Desconocido'
-    t = str(nombre).strip().title()
+# ── Funciones ─────────────────────────────────────────────────
+
+def limpiar_texto(texto, largo=40):
+    if not texto: return None
+    t = str(texto).strip().title()
     t = re.sub(r'[<>:"/\\|?*]', '', t)
     t = re.sub(r'\s+', '_', t.strip())
-    return t[:largo]
+    return t[:largo] if t else None
 
 def fmt_fecha(f):
     if not f: return None
     try:
         p = str(f).split('-')
-        return f"{p[2]}-{p[1]}-{p[0]}" if len(p) == 3 else f
+        return f"{p[2]}-{p[1]}-{p[0]}" if len(p) == 3 else str(f)
     except: return str(f)
 
-def limpiar_subtipo(texto, largo=20):
-    if not texto: return None
-    t = str(texto).strip().title()
-    t = re.sub(r'[<>:"/\\|?*\s]', '_', t)
-    return re.sub(r'_+', '_', t).strip('_')[:largo]
+def generar_nombre(d):
+    """
+    Formato: TIPO_Nombre_Apellido_DD-MM-YYYY[_hasta_DD-MM-YYYY][_NUM].pdf
+    """
+    partes = []
 
-def sufijo_dias(dias, f_desde, f_hasta):
-    if dias:
-        return f"{dias}dia" if int(dias) == 1 else f"{dias}dias"
-    if f_desde and (not f_hasta or f_hasta == f_desde):
-        return '1dia'
-    return None
+    # Tipo → prefijo limpio
+    tipo = limpiar_texto(d.get('tipo'), largo=30)
+    if tipo:
+        partes.append(tipo.upper().replace(' ', '_'))
+    else:
+        partes.append('DOCUMENTO')
 
-def generar_nombre_estandarizado(d):
-    tipo    = d.get('tipo', 'Otro')
-    nombre  = limpiar_nombre_persona(d.get('nombre'))
+    # Nombre persona
+    nombre = limpiar_texto(d.get('nombre'), largo=40)
+    if nombre:
+        partes.append(nombre)
+
+    # Fechas
     f_desde = fmt_fecha(d.get('fecha_desde'))
     f_hasta = fmt_fecha(d.get('fecha_hasta'))
-    dias    = d.get('dias')
-    f_hasta_m = f_hasta if f_hasta and f_hasta != f_desde else None
-    f_efec    = f_desde or f_hasta
-    partes    = []
+    if f_desde:
+        partes.append(f_desde)
+    if f_hasta and f_hasta != f_desde:
+        partes.append(f"al_{f_hasta}")
 
-    if tipo == 'No Marcacion':
-        partes += ['NM', nombre]
-        if f_efec: partes.append(f_efec)
-        es, hora = d.get('entrada_salida'), d.get('hora')
-        if es and hora: partes.append(f"{es}-{hora.replace(':', '')}")
-        elif es: partes.append(es)
-    elif tipo == 'Feriado Legal':
-        partes += ['FL', nombre]
-        if f_desde: partes.append(f_desde)
-        if f_hasta_m: partes.append(f_hasta_m)
-        s = sufijo_dias(dias, d.get('fecha_desde'), d.get('fecha_hasta'))
-        if s: partes.append(s)
-    elif tipo == 'Permiso Administrativo':
-        partes += ['PA', nombre]
-        if f_desde: partes.append(f_desde)
-        if f_hasta_m: partes.append(f_hasta_m)
-        s = sufijo_dias(dias, d.get('fecha_desde'), d.get('fecha_hasta'))
-        if s: partes.append(s)
-    elif tipo == 'Permiso Sin Goce':
-        partes += ['PSG', nombre]
-        if f_desde: partes.append(f_desde)
-        if f_hasta_m: partes.append(f_hasta_m)
-        s = sufijo_dias(dias, d.get('fecha_desde'), d.get('fecha_hasta'))
-        if s: partes.append(s)
-    elif tipo == 'Resolucion':
-        partes.append('RESOL')
-        if d.get('numero_resolucion'):
-            num = str(d['numero_resolucion']).replace('/', '-').replace('\\', '-')
-            partes.append(num)
-        partes.append(nombre)
-        if f_efec: partes.append(f_efec)
-    elif tipo == 'Audiometria':
-        partes += ['AUDIO', nombre]
-        if f_efec: partes.append(f_efec)
-    elif tipo == 'Audioimped':
-        partes += ['AUDIOIMP', nombre]
-        if f_efec: partes.append(f_efec)
-    else:
-        partes.append('OTRO')
-        subtipo = limpiar_subtipo(d.get('subtipo'))
-        if subtipo: partes.append(subtipo)
-        partes.append(nombre)
-        if f_efec: partes.append(f_efec)
+    # Número / folio
+    numero = d.get('numero')
+    if numero:
+        num_limpio = re.sub(r'[<>:"/\\|?*\s]', '-', str(numero))[:20]
+        partes.append(f"N{num_limpio}")
 
     nombre_final = '_'.join(filter(None, partes)) + '.pdf'
-    return nombre_final[:196] + '.pdf' if len(nombre_final) > 200 else nombre_final
+    # Limitar largo total
+    if len(nombre_final) > 200:
+        nombre_final = nombre_final[:196] + '.pdf'
+    return nombre_final
 
-def pdf_a_imagen_base64(path):
-    """Retorna lista de imágenes base64 (máximo 2 páginas)."""
+def pdf_primera_pagina_base64(path):
+    """Solo primera página, 90 DPI para minimizar tokens."""
     doc = fitz.open(path)
-    imagenes = []
-    for n in range(min(2, len(doc))):
-        pix = doc[n].get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
-        imagenes.append(base64.standard_b64encode(pix.tobytes('png')).decode('utf-8'))
+    pix = doc[0].get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
+    img_b64 = base64.standard_b64encode(pix.tobytes('png')).decode('utf-8')
     doc.close()
-    return imagenes
+    return img_b64
 
-def clasificar(client_ai, imagenes):
-    """imagenes: lista de strings base64 (1 o 2 páginas)."""
+def clasificar(client_ai, img_b64):
     for intento in range(1, 4):
         try:
-            contenido = []
-            for img_b64 in imagenes:
-                contenido.append({'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': img_b64}})
-            contenido.append({'type': 'text', 'text': PROMPT})
             r = client_ai.messages.create(
                 model='claude-haiku-4-5-20251001',
-                max_tokens=400,
-                messages=[{'role': 'user', 'content': contenido}]
+                max_tokens=300,
+                messages=[{
+                    'role': 'user',
+                    'content': [
+                        {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': img_b64}},
+                        {'type': 'text', 'text': PROMPT}
+                    ]
+                }]
             )
             texto = r.content[0].text.strip()
             texto = re.sub(r'^```[a-z]*\s*|\s*```$', '', texto, flags=re.MULTILINE).strip()
-            return json.loads(texto)
+            datos = json.loads(texto)
+            # Guardar uso de tokens
+            datos['_tokens'] = r.usage.input_tokens + r.usage.output_tokens
+            return datos
         except json.JSONDecodeError:
             if intento < 3: time.sleep(10)
         except Exception as e:
-            if 'rate' in str(e).lower() or '429' in str(e):
+            msg = str(e).lower()
+            if 'rate' in msg or '429' in msg:
                 time.sleep(60)
             elif intento < 3:
                 time.sleep(10)
     return None
 
 # ── Botón de proceso ──────────────────────────────────────────
-if st.button("🚀 Clasificar documentos", type="primary", use_container_width=True):
+col_btn, col_info = st.columns([3, 1])
+with col_btn:
+    iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
+with col_info:
+    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
+    costo_est = len(archivos) * 0.0005
+    st.markdown(f"""
+    <div style="padding:0.5rem; text-align:center; font-size:0.72rem; color:#64748b; line-height:1.5;">
+        Costo estimado<br>
+        <span style="color:#94a3b8; font-family:'IBM Plex Mono',monospace;">~${costo_est:.3f} USD</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    client_ai = anthropic.Anthropic(api_key=api_key)
+if not iniciar:
+    st.stop()
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_dir  = os.path.join(tmpdir, 'pdfs')
-        out_dir  = os.path.join(tmpdir, 'out')
-        os.makedirs(pdf_dir); os.makedirs(out_dir)
+client_ai = anthropic.Anthropic(api_key=api_key)
 
-        # Extraer PDFs
-        pdfs = []
-        if es_msg:
-            for f in archivos:
-                msg_path = os.path.join(tmpdir, f.name)
-                with open(msg_path, 'wb') as fp: fp.write(f.read())
-                try:
-                    msg = extract_msg.Message(msg_path)
-                    for att in msg.attachments:
-                        fname = att.longFilename or att.shortFilename
-                        if fname and fname.lower().endswith('.pdf'):
-                            fp_pdf = os.path.join(pdf_dir, fname)
-                            i = 1
-                            while os.path.exists(fp_pdf):
-                                base, ext2 = os.path.splitext(fname)
-                                fp_pdf = os.path.join(pdf_dir, f'{base}_{i}{ext2}')
-                                i += 1
-                            with open(fp_pdf, 'wb') as fout: fout.write(att.data)
-                            pdfs.append(fp_pdf)
-                except Exception as e:
-                    st.warning(f"⚠️ Error leyendo {f.name}: {e}")
-        else:
-            for f in archivos:
-                fp = os.path.join(pdf_dir, f.name)
-                with open(fp, 'wb') as fp2: fp2.write(f.read())
-                pdfs.append(fp)
+with tempfile.TemporaryDirectory() as tmpdir:
+    pdf_dir = os.path.join(tmpdir, 'pdfs')
+    out_dir = os.path.join(tmpdir, 'out')
+    os.makedirs(pdf_dir); os.makedirs(out_dir)
 
-        total = len(pdfs)
-        if total == 0:
-            st.error("No se encontraron PDFs para procesar.")
-            st.stop()
-
-        st.info(f"📄 {total} PDF(s) a clasificar")
-
-        # Procesar
-        log = []
-        progress = st.progress(0)
-        status   = st.empty()
-        log_container = st.container()
-
-        for i, pdf_path in enumerate(pdfs):
-            nombre_orig = os.path.basename(pdf_path)
-            status.markdown(f"⏳ Procesando `{nombre_orig}` ({i+1}/{total})...")
-
+    # ── Extraer PDFs ──────────────────────────────────────────
+    pdfs = []
+    if es_msg:
+        for f in archivos:
+            msg_path = os.path.join(tmpdir, f.name)
+            with open(msg_path, 'wb') as fp: fp.write(f.read())
             try:
-                imagenes = pdf_a_imagen_base64(pdf_path)
-                datos    = clasificar(client_ai, imagenes)
-
-                if datos is None:
-                    nuevo = f'REVISAR_{nombre_orig}'
-                    shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
-                    log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': 'FALLIDO'})
-                else:
-                    dias_doc, dias_calc, coincide, _ = validar_dias(datos)
-                    estado = 'OK_REVISAR_DIAS' if coincide is False else 'OK'
-                    nuevo_nombre = generar_nombre_estandarizado(datos)
-                    if estado == 'OK_REVISAR_DIAS':
-                        nuevo_nombre = nuevo_nombre.replace('.pdf', '_REVISAR_DIAS.pdf')
-
-                    # Evitar duplicados
-                    dest = os.path.join(out_dir, nuevo_nombre)
-                    c = 1
-                    while os.path.exists(dest):
-                        base = nuevo_nombre.replace('.pdf', '')
-                        dest = os.path.join(out_dir, f'{base}_{c}.pdf')
-                        c += 1
-                    shutil.copy2(pdf_path, dest)
-
-                    log.append({'original': nombre_orig, 'nuevo': os.path.basename(dest),
-                                'datos': datos, 'estado': estado,
-                                'dias_doc': dias_doc, 'dias_calc': dias_calc,
-                                'confianza': datos.get('confianza', 'ALTA'),
-                                'paginas': len(imagenes)})
-
+                msg = extract_msg.Message(msg_path)
+                for att in msg.attachments:
+                    fname = att.longFilename or att.shortFilename
+                    if fname and fname.lower().endswith('.pdf'):
+                        fp_pdf = os.path.join(pdf_dir, fname)
+                        c = 1
+                        while os.path.exists(fp_pdf):
+                            base2, ext2 = os.path.splitext(fname)
+                            fp_pdf = os.path.join(pdf_dir, f'{base2}_{c}{ext2}')
+                            c += 1
+                        with open(fp_pdf, 'wb') as fout: fout.write(att.data)
+                        pdfs.append(fp_pdf)
             except Exception as e:
+                st.warning(f"⚠️ Error leyendo {f.name}: {e}")
+    else:
+        for f in archivos:
+            fp = os.path.join(pdf_dir, f.name)
+            with open(fp, 'wb') as fp2: fp2.write(f.read())
+            pdfs.append(fp)
+
+    total = len(pdfs)
+    if total == 0:
+        st.error("No se encontraron PDFs para procesar.")
+        st.stop()
+
+    st.markdown(f'<div class="limit-note">⏳ Procesando {total} documento(s)…</div>', unsafe_allow_html=True)
+
+    # ── Procesar ──────────────────────────────────────────────
+    log = []
+    progress = st.progress(0)
+    status   = st.empty()
+    tokens_total = 0
+
+    for i, pdf_path in enumerate(pdfs):
+        nombre_orig = os.path.basename(pdf_path)
+        status.markdown(f"<span style='color:#64748b; font-size:0.82rem; font-family:monospace;'>⏳ {nombre_orig} ({i+1}/{total})</span>", unsafe_allow_html=True)
+
+        try:
+            img_b64 = pdf_primera_pagina_base64(pdf_path)
+            datos   = clasificar(client_ai, img_b64)
+
+            if datos is None:
                 nuevo = f'REVISAR_{nombre_orig}'
                 shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
-                log.append({'original': nombre_orig, 'nuevo': nuevo,
-                            'estado': f'ERROR: {str(e)[:60]}'})
+                log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': 'FALLIDO'})
+            else:
+                tokens_total += datos.get('_tokens', 0)
+                nuevo_nombre  = generar_nombre(datos)
 
-            progress.progress((i + 1) / total)
-            time.sleep(1)
+                # Evitar duplicados
+                dest = os.path.join(out_dir, nuevo_nombre)
+                c = 1
+                while os.path.exists(dest):
+                    base3 = nuevo_nombre.replace('.pdf', '')
+                    dest = os.path.join(out_dir, f'{base3}_{c}.pdf')
+                    c += 1
+                shutil.copy2(pdf_path, dest)
 
-        status.markdown("✅ Procesamiento completado")
+                log.append({
+                    'original' : nombre_orig,
+                    'nuevo'    : os.path.basename(dest),
+                    'datos'    : datos,
+                    'estado'   : 'OK',
+                    'confianza': datos.get('confianza', 'ALTA'),
+                    'tipo'     : datos.get('tipo', ''),
+                })
 
-        # Estadísticas
-        n_ok      = len([r for r in log if r['estado'] == 'OK'])
-        n_revisar = len([r for r in log if r['estado'] == 'OK_REVISAR_DIAS'])
-        n_fallo   = len([r for r in log if r['estado'] not in ('OK', 'OK_REVISAR_DIAS')])
+        except Exception as e:
+            nuevo = f'REVISAR_{nombre_orig}'
+            shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
+            log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': f'ERROR: {str(e)[:80]}'})
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f'<div class="stat-box"><div class="stat-num stat-ok">{n_ok}</div><div class="stat-label">OK</div></div>', unsafe_allow_html=True)
-        with col2:
-            st.markdown(f'<div class="stat-box"><div class="stat-num stat-warn">{n_revisar}</div><div class="stat-label">REVISAR DÍAS</div></div>', unsafe_allow_html=True)
-        with col3:
-            st.markdown(f'<div class="stat-box"><div class="stat-num stat-err">{n_fallo}</div><div class="stat-label">FALLIDOS</div></div>', unsafe_allow_html=True)
+        progress.progress((i + 1) / total)
+        time.sleep(0.8)
 
-        st.markdown("<br>", unsafe_allow_html=True)
+    status.empty()
+    progress.empty()
 
-        # Resultados
-        st.markdown("### Resultados")
-        for r in log:
-            if r['estado'] == 'OK':               badge, cls = '✅ OK', 'badge-ok'
-            elif r['estado'] == 'OK_REVISAR_DIAS': badge, cls = '🟡 REVISAR DÍAS', 'badge-warn'
-            else:                                  badge, cls = '❌ FALLIDO', 'badge-err'
-            tipo_str      = r.get('datos', {}).get('tipo', '') if 'datos' in r else ''
-            confianza     = r.get('confianza', '')
-            paginas       = r.get('paginas', 1)
-            conf_color    = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#888')
-            conf_html     = f'&nbsp;·&nbsp;<span style="color:{conf_color};font-size:0.75rem">⬤ {confianza}</span>' if confianza else ''
-            pag_html      = f'&nbsp;·&nbsp;<span style="color:#555;font-size:0.75rem">{paginas}p</span>' if paginas > 1 else ''
-            st.markdown(f"""
-            <div class="result-row">
-                <span class="{cls}">{badge}</span>
-                {'&nbsp;·&nbsp;<span style="color:#aaa">' + tipo_str + '</span>' if tipo_str else ''}
-                {conf_html}{pag_html}
-                <br>
-                <span style="color:#666">↳</span> {r.get('nuevo', r['original'])}
-            </div>
-            """, unsafe_allow_html=True)
+    # ── Estadísticas ──────────────────────────────────────────
+    n_ok    = sum(1 for r in log if r['estado'] == 'OK')
+    n_fallo = sum(1 for r in log if r['estado'] != 'OK')
+    costo_real = tokens_total * 0.000001  # aprox Haiku input price
 
-        # ZIP y descarga
-        zip_path = os.path.join(tmpdir, 'pdf_clasificados.zip')
-        with zipfile.ZipFile(zip_path, 'w') as zf:
-            for archivo in os.listdir(out_dir):
-                zf.write(os.path.join(out_dir, archivo), archivo)
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-        with open(zip_path, 'rb') as f:
-            st.download_button(
-                label="📦 Descargar PDF clasificados (.zip)",
-                data=f.read(),
-                file_name="pdf_clasificados.zip",
-                mime="application/zip",
-                use_container_width=True,
-                type="primary"
-            )
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f'<div class="stat-box"><div class="stat-num stat-ok">{n_ok}</div><div class="stat-label">Renombrados</div></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-box"><div class="stat-num stat-err">{n_fallo}</div><div class="stat-label">Para revisar</div></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="stat-box"><div class="stat-num" style="color:#38bdf8; font-size:1.4rem;">{tokens_total:,}</div><div class="stat-label">Tokens usados</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Resultados ────────────────────────────────────────────
+    st.markdown("### Resultados")
+    for r in log:
+        if r['estado'] == 'OK':
+            badge, cls = '✅', 'badge-ok'
+        else:
+            badge, cls = '❌', 'badge-err'
+
+        tipo_str   = r.get('tipo', '')
+        confianza  = r.get('confianza', '')
+        conf_color = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#475569')
+        conf_html  = f'&nbsp;<span style="color:{conf_color}; font-size:0.7rem;">⬤ {confianza}</span>' if confianza else ''
+        tipo_html  = f'&nbsp;·&nbsp;<span style="color:#94a3b8">{tipo_str}</span>' if tipo_str else ''
+
+        st.markdown(f"""
+        <div class="result-row">
+            <span class="{cls}">{badge}</span>{tipo_html}{conf_html}
+            <br>
+            <span style="color:#334155; font-size:0.72rem;">↳ orig: {r['original']}</span>
+            <br>
+            <span style="color:#cbd5e1;">↳ nuevo: {r.get('nuevo', r['original'])}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── CSV de log ────────────────────────────────────────────
+    csv_lines = ["original,nuevo,tipo,confianza,estado"]
+    for r in log:
+        tipo_c = r.get('tipo', '').replace(',', ';')
+        conf_c = r.get('confianza', '')
+        csv_lines.append(f'"{r["original"]}","{r.get("nuevo","")}","{tipo_c}","{conf_c}","{r["estado"]}"')
+    csv_bytes = '\n'.join(csv_lines).encode('utf-8')
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── ZIP y descarga ────────────────────────────────────────
+    zip_path = os.path.join(tmpdir, 'documentos_renombrados.zip')
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        for archivo in os.listdir(out_dir):
+            zf.write(os.path.join(out_dir, archivo), archivo)
+        # Incluir CSV de log dentro del ZIP
+        zf.writestr('_log_renombrado.csv', '\n'.join(csv_lines))
+
+    with open(zip_path, 'rb') as f:
+        zip_bytes = f.read()
+
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="📦 Descargar PDFs renombrados (.zip)",
+            data=zip_bytes,
+            file_name="documentos_renombrados.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary"
+        )
+    with col_dl2:
+        st.download_button(
+            label="📋 Descargar log (.csv)",
+            data=csv_bytes,
+            file_name="log_renombrado.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    # ── Ko-fi footer ──────────────────────────────────────────
+    st.markdown("""
+    <div class="kofi-banner">
+        Esta app tiene un costo real de API. Si te ahorró tiempo,
+        <a href="https://ko-fi.com/TU_USUARIO" target="_blank">☕ invítame un café en Ko-fi</a>
+        para seguir manteniéndola. Gracias 🙏
+    </div>
+    """, unsafe_allow_html=True)
