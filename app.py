@@ -154,28 +154,6 @@ st.markdown("""
 
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
-    <div style="padding: 0.5rem 0 1rem 0;">
-        <p style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#3b82f6; letter-spacing:0.1em; margin:0;">
-            CONFIGURACIÓN
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # API Key
-    api_key = None
-    if "ANTHROPIC_API_KEY" in st.secrets:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-        st.success("✅ API Key configurada en Secrets")
-    else:
-        api_key = st.text_input(
-            "🔑 API Key de Anthropic",
-            type="password",
-            placeholder="sk-ant-...",
-            help="Obtén tu key en console.anthropic.com"
-        )
-
-    st.markdown("---")
 
     # Tipo de archivo
     tipo_archivo = st.radio(
@@ -248,9 +226,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Validación API key ────────────────────────────────────────
+# ── API Key solo desde secrets ────────────────────────────────
+api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
 if not api_key:
-    st.info("👈 Ingresa tu API Key de Anthropic en el panel lateral para continuar.")
+    st.error("⚠️ API Key no configurada. Si eres administrador, agrégala en Streamlit Secrets.")
     st.stop()
 
 # ── Upload ────────────────────────────────────────────────────
