@@ -135,7 +135,7 @@ st.markdown("""
         margin-bottom: 0.3rem;
     }
     [data-testid="stFileUploaderDropzoneInstructions"] > div::after {
-        content: "Límite 50 MB por archivo · PDF";
+        content: "Límite 50 MB por archivo · PDF · MSG · ZIP";
         display: block;
         font-size: 0.75rem;
         color: #475569;
@@ -154,16 +154,6 @@ st.markdown("""
 
 # ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
-
-    # Tipo de archivo
-    tipo_archivo = st.radio(
-        "Tipo de entrada",
-        ["📄 PDFs directamente", "📨 Correos .MSG (con PDFs adjuntos)"],
-        help="Los .MSG son correos de Outlook que contienen PDFs adjuntos."
-    )
-    es_msg = tipo_archivo.startswith("📨")
-
-    st.markdown("---")
 
     # Límite
     LIMITE_ARCHIVOS = st.slider(
@@ -233,12 +223,11 @@ if not api_key:
     st.stop()
 
 # ── Upload ────────────────────────────────────────────────────
-ext = "msg" if es_msg else "pdf"
-st.markdown(f'<div class="limit-note">📁 Sube hasta <strong>{LIMITE_ARCHIVOS} archivos</strong> .{ext.upper()} por sesión</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="limit-note">📁 Sube hasta <strong>{LIMITE_ARCHIVOS} archivos</strong> · PDF, MSG o ZIP por sesión</div>', unsafe_allow_html=True)
 
 archivos = st.file_uploader(
-    f"Arrastra o selecciona archivos .{ext.upper()}",
-    type=[ext],
+    "Arrastra o selecciona archivos",
+    type=["pdf", "msg", "zip"],
     accept_multiple_files=True,
     label_visibility="collapsed"
 )
@@ -291,6 +280,10 @@ st.success(f"✅ {len(archivos)} archivo(s) cargados — listos para clasificar"
 # ── Prompt genérico ───────────────────────────────────────────
 PROMPT = """
 Analiza la primera página de este documento escaneado.
+
+IMPORTANTE: El documento puede estar ligeramente inclinado o con orientación imperfecta
+debido al escaneo. Igualmente extrae la información — no indiques que está rotado,
+simplemente lee el contenido como puedas.
 
 Tu tarea: identificar los datos clave para generar un nombre de archivo estandarizado.
 
@@ -377,13 +370,72 @@ def generar_nombre(d):
         nombre_final = nombre_final[:196] + '.pdf'
     return nombre_final
 
+def detectar_y_corregir_rotacion(page):
+    """
+    Detecta la orientación dominante del texto en la página y devuelve
+    los grados de corrección necesarios (0, 90, 180, 270).
+    
+    Estrategia:
+    1. Si el PDF ya tiene rotación embebida, la respeta.
+    2. Si no, analiza el ángulo de los bloques de texto via get_text("dict").
+    3. Devuelve la rotación total a aplicar para que el texto quede horizontal.
+    """
+    # Rotación embebida en el PDF (0, 90, 180, 270)
+    rot_embebida = page.rotation  # ya la maneja fitz al renderizar, pero la usamos como referencia
+
+    # Analizar bloques de texto para detectar orientación real
+    try:
+        bloques = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        angulos = []
+        for bloque in bloques:
+            if bloque.get("type") != 0:  # solo bloques de texto
+                continue
+            for linea in bloque.get("lines", []):
+                dir_x = linea.get("dir", (1, 0))[0]  # coseno del ángulo
+                dir_y = linea.get("dir", (1, 0))[1]  # seno del ángulo
+                import math
+                angulo = round(math.degrees(math.atan2(-dir_y, dir_x)) / 90) * 90
+                angulos.append(int(angulo) % 360)
+    except Exception:
+        return 0  # si falla el análisis, no rotar
+
+    if not angulos:
+        return 0
+
+    # Ángulo dominante
+    from collections import Counter
+    angulo_dom = Counter(angulos).most_common(1)[0][0]
+
+    # Convertir ángulo de texto a corrección de página
+    # Si el texto apunta a 0° → página OK
+    # Si el texto apunta a 90° → página rotada 90° en sentido antihorario → corregir +90
+    # Si el texto apunta a 180° → página de cabeza → corregir +180
+    # Si el texto apunta a 270° → página rotada 270° → corregir +270
+    correccion = (360 - angulo_dom) % 360
+    # Normalizar a múltiplos de 90 más cercanos útiles
+    if correccion not in (0, 90, 180, 270):
+        return 0
+    return correccion
+
 def pdf_primera_pagina_base64(path):
-    """Solo primera página, 90 DPI para minimizar tokens."""
+    """
+    Primera página a 90 DPI con corrección automática de orientación.
+    Detecta texto rotado (escaneado de lado o de cabeza) y lo corrige
+    antes de enviar la imagen a la IA.
+    """
     doc = fitz.open(path)
-    pix = doc[0].get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
+    page = doc[0]
+
+    correccion = detectar_y_corregir_rotacion(page)
+
+    if correccion != 0:
+        # Aplicar rotación de corrección (fitz suma a la rotación existente)
+        page.set_rotation((page.rotation + correccion) % 360)
+
+    pix = page.get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
     img_b64 = base64.standard_b64encode(pix.tobytes('png')).decode('utf-8')
     doc.close()
-    return img_b64
+    return img_b64, correccion
 
 def clasificar(client_ai, img_b64):
     for intento in range(1, 4):
@@ -439,32 +491,70 @@ with tempfile.TemporaryDirectory() as tmpdir:
     out_dir = os.path.join(tmpdir, 'out')
     os.makedirs(pdf_dir); os.makedirs(out_dir)
 
-    # ── Extraer PDFs ──────────────────────────────────────────
+    # ── Extraer PDFs (detección automática por extensión) ─────
     pdfs = []
-    if es_msg:
-        for f in archivos:
-            msg_path = os.path.join(tmpdir, f.name)
-            with open(msg_path, 'wb') as fp: fp.write(f.read())
+
+    def extraer_msg(msg_path, pdf_dir):
+        """Extrae todos los PDFs adjuntos de un .msg."""
+        encontrados = []
+        try:
+            msg = extract_msg.Message(msg_path)
+            for att in msg.attachments:
+                fname = att.longFilename or att.shortFilename or 'adjunto.pdf'
+                if fname.lower().endswith('.pdf'):
+                    fp_pdf = os.path.join(pdf_dir, fname)
+                    c = 1
+                    while os.path.exists(fp_pdf):
+                        base2, ext2 = os.path.splitext(fname)
+                        fp_pdf = os.path.join(pdf_dir, f'{base2}_{c}{ext2}')
+                        c += 1
+                    with open(fp_pdf, 'wb') as fout:
+                        fout.write(att.data)
+                    encontrados.append(fp_pdf)
+        except Exception as e:
+            st.warning(f"⚠️ Error leyendo MSG: {e}")
+        return encontrados
+
+    for f in archivos:
+        ext_f = f.name.lower().rsplit('.', 1)[-1]
+        raw_path = os.path.join(tmpdir, f.name)
+        with open(raw_path, 'wb') as fp:
+            fp.write(f.read())
+
+        if ext_f == 'pdf':
+            dest = os.path.join(pdf_dir, f.name)
+            shutil.copy2(raw_path, dest)
+            pdfs.append(dest)
+
+        elif ext_f == 'msg':
+            pdfs.extend(extraer_msg(raw_path, pdf_dir))
+
+        elif ext_f == 'zip':
             try:
-                msg = extract_msg.Message(msg_path)
-                for att in msg.attachments:
-                    fname = att.longFilename or att.shortFilename
-                    if fname and fname.lower().endswith('.pdf'):
-                        fp_pdf = os.path.join(pdf_dir, fname)
-                        c = 1
-                        while os.path.exists(fp_pdf):
-                            base2, ext2 = os.path.splitext(fname)
-                            fp_pdf = os.path.join(pdf_dir, f'{base2}_{c}{ext2}')
-                            c += 1
-                        with open(fp_pdf, 'wb') as fout: fout.write(att.data)
-                        pdfs.append(fp_pdf)
+                with zipfile.ZipFile(raw_path, 'r') as zf:
+                    for nombre_zip in zf.namelist():
+                        ext_zip = nombre_zip.lower().rsplit('.', 1)[-1]
+                        if ext_zip == 'pdf':
+                            datos_zip = zf.read(nombre_zip)
+                            base_name = os.path.basename(nombre_zip) or nombre_zip
+                            dest = os.path.join(pdf_dir, base_name)
+                            c = 1
+                            while os.path.exists(dest):
+                                b, e = os.path.splitext(base_name)
+                                dest = os.path.join(pdf_dir, f'{b}_{c}{e}')
+                                c += 1
+                            with open(dest, 'wb') as fp:
+                                fp.write(datos_zip)
+                            pdfs.append(dest)
+                        elif ext_zip == 'msg':
+                            datos_zip = zf.read(nombre_zip)
+                            base_name = os.path.basename(nombre_zip) or nombre_zip
+                            msg_temp = os.path.join(tmpdir, base_name)
+                            with open(msg_temp, 'wb') as fp:
+                                fp.write(datos_zip)
+                            pdfs.extend(extraer_msg(msg_temp, pdf_dir))
             except Exception as e:
-                st.warning(f"⚠️ Error leyendo {f.name}: {e}")
-    else:
-        for f in archivos:
-            fp = os.path.join(pdf_dir, f.name)
-            with open(fp, 'wb') as fp2: fp2.write(f.read())
-            pdfs.append(fp)
+                st.warning(f"⚠️ Error leyendo ZIP {f.name}: {e}")
 
     total = len(pdfs)
     if total == 0:
@@ -484,7 +574,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         status.markdown(f"<span style='color:#64748b; font-size:0.82rem; font-family:monospace;'>⏳ {nombre_orig} ({i+1}/{total})</span>", unsafe_allow_html=True)
 
         try:
-            img_b64 = pdf_primera_pagina_base64(pdf_path)
+            img_b64, rotacion = pdf_primera_pagina_base64(pdf_path)
             datos   = clasificar(client_ai, img_b64)
 
             if datos is None:
@@ -511,6 +601,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
                     'estado'   : 'OK',
                     'confianza': datos.get('confianza', 'ALTA'),
                     'tipo'     : datos.get('tipo', ''),
+                    'rotacion' : rotacion,
                 })
 
         except Exception as e:
@@ -551,13 +642,15 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
         tipo_str   = r.get('tipo', '')
         confianza  = r.get('confianza', '')
+        rotacion   = r.get('rotacion', 0)
         conf_color = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#475569')
         conf_html  = f'&nbsp;<span style="color:{conf_color}; font-size:0.7rem;">⬤ {confianza}</span>' if confianza else ''
         tipo_html  = f'&nbsp;·&nbsp;<span style="color:#94a3b8">{tipo_str}</span>' if tipo_str else ''
+        rot_html   = f'&nbsp;·&nbsp;<span style="color:#f59e0b; font-size:0.7rem;" title="Rotación corregida automáticamente">↻ {rotacion}°</span>' if rotacion else ''
 
         st.markdown(f"""
         <div class="result-row">
-            <span class="{cls}">{badge}</span>{tipo_html}{conf_html}
+            <span class="{cls}">{badge}</span>{tipo_html}{conf_html}{rot_html}
             <br>
             <span style="color:#334155; font-size:0.72rem;">↳ orig: {r['original']}</span>
             <br>
