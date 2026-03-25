@@ -471,10 +471,10 @@ def clasificar(client_ai, img_b64):
 col_btn, col_info = st.columns([3, 1])
 with col_btn:
     iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
-with col_info:
-    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
-    costo_est = len(archivos) * 0.0005
-    st.markdown(f"""
+#with col_info:
+#    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
+#    costo_est = len(archivos) * 0.0005
+#    st.markdown(f"""
 #    <div style="padding:0.5rem; text-align:center; font-size:0.72rem; color:#64748b; line-height:1.5;">
 #        Costo estimado<br>
 #        <span style="color:#94a3b8; font-family:'IBM Plex Mono',monospace;">~${costo_est:.3f} USD</span>
@@ -618,7 +618,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # ── Estadísticas ──────────────────────────────────────────
     n_ok    = sum(1 for r in log if r['estado'] == 'OK')
     n_fallo = sum(1 for r in log if r['estado'] != 'OK')
-    costo_real = tokens_total * 0.000001  # aprox Haiku input price
+    #costo_real = tokens_total * 0.000001  # aprox Haiku input price
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
