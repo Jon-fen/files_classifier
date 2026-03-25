@@ -466,20 +466,20 @@ def clasificar(client_ai, img_b64):
             elif intento < 3:
                 time.sleep(10)
     return None
-
+## ocultar costos ##
 # ── Botón de proceso ──────────────────────────────────────────
-col_btn, col_info = st.columns([3, 1])
-with col_btn:
-    iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
-with col_info:
-    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
-    costo_est = len(archivos) * 0.0005
-    st.markdown(f"""
-    <div style="padding:0.5rem; text-align:center; font-size:0.72rem; color:#64748b; line-height:1.5;">
-        Costo estimado<br>
-        <span style="color:#94a3b8; font-family:'IBM Plex Mono',monospace;">~${costo_est:.3f} USD</span>
-    </div>
-    """, unsafe_allow_html=True)
+#col_btn, col_info = st.columns([3, 1])
+#with col_btn:
+#with col_info:
+#    iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
+#    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
+#    costo_est = len(archivos) * 0.0005
+#    st.markdown(f"""
+#    <div style="padding:0.5rem; text-align:center; font-size:0.72rem; color:#64748b; line-height:1.5;">
+#        Costo estimado<br>
+#        <span style="color:#94a3b8; font-family:'IBM Plex Mono',monospace;">~${costo_est:.3f} USD</span>
+#    </div>
+#    """, unsafe_allow_html=True)
 
 if not iniciar:
     st.stop()
