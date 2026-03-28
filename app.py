@@ -207,7 +207,7 @@ st.markdown("""
 <div class="header-block">
     <h1 style="margin:0; font-size:1.35rem; color:#e2e8f0; letter-spacing:0.02em;">
         📄 DocRename AI
-        <span class="version-tag">v1.3 beta</span>
+        <span class="version-tag">v1.4 beta</span>
     </h1>
     <p style="margin:0.4rem 0 0 0; color:#64748b; font-size:0.82rem;">
         Renombra lotes de PDFs escaneados automáticamente usando visión de IA.<br>
@@ -281,9 +281,8 @@ st.success(f"✅ {len(archivos)} archivo(s) cargados — listos para clasificar"
 PROMPT = """
 Analiza la primera página de este documento escaneado.
 
-IMPORTANTE: El documento puede estar ligeramente inclinado o con orientación imperfecta
-debido al escaneo. Igualmente extrae la información — no indiques que está rotado,
-simplemente lee el contenido como puedas.
+IMPORTANTE: El documento es un escáner. Puede tener leve inclinación.
+Lee el contenido con máxima precisión ignorando imperfecciones visuales.
 
 Tu tarea: identificar los datos clave para generar un nombre de archivo estandarizado.
 
@@ -370,72 +369,35 @@ def generar_nombre(d):
         nombre_final = nombre_final[:196] + '.pdf'
     return nombre_final
 
-def detectar_y_corregir_rotacion(page):
-    """
-    Detecta la orientación dominante del texto en la página y devuelve
-    los grados de corrección necesarios (0, 90, 180, 270).
-    
-    Estrategia:
-    1. Si el PDF ya tiene rotación embebida, la respeta.
-    2. Si no, analiza el ángulo de los bloques de texto via get_text("dict").
-    3. Devuelve la rotación total a aplicar para que el texto quede horizontal.
-    """
-    # Rotación embebida en el PDF (0, 90, 180, 270)
-    rot_embebida = page.rotation  # ya la maneja fitz al renderizar, pero la usamos como referencia
-
-    # Analizar bloques de texto para detectar orientación real
-    try:
-        bloques = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-        angulos = []
-        for bloque in bloques:
-            if bloque.get("type") != 0:  # solo bloques de texto
-                continue
-            for linea in bloque.get("lines", []):
-                dir_x = linea.get("dir", (1, 0))[0]  # coseno del ángulo
-                dir_y = linea.get("dir", (1, 0))[1]  # seno del ángulo
-                import math
-                angulo = round(math.degrees(math.atan2(-dir_y, dir_x)) / 90) * 90
-                angulos.append(int(angulo) % 360)
-    except Exception:
-        return 0  # si falla el análisis, no rotar
-
-    if not angulos:
-        return 0
-
-    # Ángulo dominante
-    from collections import Counter
-    angulo_dom = Counter(angulos).most_common(1)[0][0]
-
-    # Convertir ángulo de texto a corrección de página
-    # Si el texto apunta a 0° → página OK
-    # Si el texto apunta a 90° → página rotada 90° en sentido antihorario → corregir +90
-    # Si el texto apunta a 180° → página de cabeza → corregir +180
-    # Si el texto apunta a 270° → página rotada 270° → corregir +270
-    correccion = (360 - angulo_dom) % 360
-    # Normalizar a múltiplos de 90 más cercanos útiles
-    if correccion not in (0, 90, 180, 270):
-        return 0
-    return correccion
-
 def pdf_primera_pagina_base64(path):
     """
-    Primera página a 90 DPI con corrección automática de orientación.
-    Detecta texto rotado (escaneado de lado o de cabeza) y lo corrige
-    antes de enviar la imagen a la IA.
+    Renderiza la primera página a 90 DPI corrigiendo la rotación embebida del PDF.
+
+    Los escáneres y sistemas hospitalarios graban la orientación real en los
+    metadatos del PDF (campo /Rotate: 0, 90, 180 o 270). PyMuPDF expone ese
+    valor en page.rotation.
+
+    La corrección se aplica mediante una Matrix de contrarotación ANTES de
+    escalar, usando fitz.Matrix.prerotate(-rot). Esto produce un pixmap ya
+    orientado correctamente sin modificar el archivo original.
+
+    NO se intenta detectar orientación analizando bloques de texto: ese método
+    solo funciona con PDFs de texto vectorial, no con PDFs de imagen pura
+    (escaneados), que son el caso habitual en contextos hospitalarios.
     """
     doc = fitz.open(path)
     page = doc[0]
+    rot = page.rotation  # 0, 90, 180 o 270 — embebido en metadatos del PDF
 
-    correccion = detectar_y_corregir_rotacion(page)
+    # Matriz: contrarotar primero, luego escalar a 90 DPI
+    mat = fitz.Matrix(90 / 72, 90 / 72)
+    if rot != 0:
+        mat = fitz.Matrix(90 / 72, 90 / 72).prerotate(-rot)
 
-    if correccion != 0:
-        # Aplicar rotación de corrección (fitz suma a la rotación existente)
-        page.set_rotation((page.rotation + correccion) % 360)
-
-    pix = page.get_pixmap(matrix=fitz.Matrix(90/72, 90/72))
+    pix = page.get_pixmap(matrix=mat)
     img_b64 = base64.standard_b64encode(pix.tobytes('png')).decode('utf-8')
     doc.close()
-    return img_b64, correccion
+    return img_b64, rot
 
 def clasificar(client_ai, img_b64):
     for intento in range(1, 4):
@@ -471,15 +433,6 @@ def clasificar(client_ai, img_b64):
 col_btn, col_info = st.columns([3, 1])
 with col_btn:
     iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
-#with col_info:
-#    # Estimación de costo (Haiku ~$0.0004 por imagen aprox)
-#    costo_est = len(archivos) * 0.0005
-#    st.markdown(f"""
-#    <div style="padding:0.5rem; text-align:center; font-size:0.72rem; color:#64748b; line-height:1.5;">
-#        Costo estimado<br>
-#        <span style="color:#94a3b8; font-family:'IBM Plex Mono',monospace;">~${costo_est:.3f} USD</span>
-#    </div>
-#    """, unsafe_allow_html=True)
 
 if not iniciar:
     st.stop()
@@ -618,7 +571,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # ── Estadísticas ──────────────────────────────────────────
     n_ok    = sum(1 for r in log if r['estado'] == 'OK')
     n_fallo = sum(1 for r in log if r['estado'] != 'OK')
-    #costo_real = tokens_total * 0.000001  # aprox Haiku input price
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
@@ -646,7 +598,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         conf_color = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#475569')
         conf_html  = f'&nbsp;<span style="color:{conf_color}; font-size:0.7rem;">⬤ {confianza}</span>' if confianza else ''
         tipo_html  = f'&nbsp;·&nbsp;<span style="color:#94a3b8">{tipo_str}</span>' if tipo_str else ''
-        rot_html   = f'&nbsp;·&nbsp;<span style="color:#f59e0b; font-size:0.7rem;" title="Rotación corregida automáticamente">↻ {rotacion}°</span>' if rotacion else ''
+        rot_html   = f'&nbsp;·&nbsp;<span style="color:#f59e0b; font-size:0.7rem;" title="Rotación embebida corregida">↻ {rotacion}°</span>' if rotacion else ''
 
         st.markdown(f"""
         <div class="result-row">
