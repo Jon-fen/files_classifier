@@ -2,7 +2,7 @@ import streamlit as st
 import anthropic
 import fitz
 import extract_msg
-import json, re, time, base64, os, shutil, zipfile, tempfile
+import json, re, time, base64, os, shutil, zipfile, tempfile, urllib.request, urllib.parse
 from pathlib import Path
 
 # ── Configuración de página ───────────────────────────────────
@@ -486,6 +486,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 with zipfile.ZipFile(raw_path, 'r') as zf:
                     for nombre_zip in zf.namelist():
+                        base_zip = os.path.basename(nombre_zip)
+                        # Ignorar archivos ocultos de macOS (._*, __MACOSX/, .DS_Store, etc.)
+                        if not base_zip or base_zip.startswith('._') or base_zip.startswith('.') or '__MACOSX' in nombre_zip:
+                            continue
                         ext_zip = nombre_zip.lower().rsplit('.', 1)[-1]
                         if ext_zip == 'pdf':
                             datos_zip = zf.read(nombre_zip)
@@ -649,6 +653,52 @@ with tempfile.TemporaryDirectory() as tmpdir:
             mime="text/csv",
             use_container_width=True,
         )
+
+    # ── Feedback ──────────────────────────────────────────────
+    SHEETS_WEBHOOK = st.secrets.get("SHEETS_WEBHOOK_URL", None)
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.8rem;">
+        ¿Te funcionó? Tu opinión ayuda a mejorar la app.
+    </div>
+    """, unsafe_allow_html=True)
+
+    estrellas = st.feedback("stars", key="rating")
+
+    comentario = st.text_area(
+        "Comentario (opcional)",
+        placeholder="Ej: los archivos rotados igual salieron mal / todo perfecto / faltaría que...",
+        max_chars=500,
+        label_visibility="collapsed",
+    )
+
+    if st.button("Enviar feedback", use_container_width=False):
+        if estrellas is None:
+            st.warning("Selecciona al menos una estrella antes de enviar.")
+        elif not SHEETS_WEBHOOK:
+            st.info("Feedback registrado localmente (webhook no configurado).")
+        else:
+            try:
+                payload = json.dumps({
+                    "timestamp"  : time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                    "estrellas"  : estrellas + 1,   # st.feedback devuelve 0-4
+                    "comentario" : comentario.strip() or "—",
+                    "archivos"   : total,
+                    "ok"         : n_ok,
+                    "fallos"     : n_fallo,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    SHEETS_WEBHOOK,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    _ = resp.read()
+                st.success("¡Gracias por tu feedback! 🙏")
+            except Exception as e:
+                st.warning(f"No se pudo enviar el feedback: {e}")
 
     # ── Ko-fi footer ──────────────────────────────────────────
     st.markdown("""
