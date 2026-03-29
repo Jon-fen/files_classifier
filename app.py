@@ -654,10 +654,30 @@ with tempfile.TemporaryDirectory() as tmpdir:
             use_container_width=True,
         )
 
-    # ── Feedback ──────────────────────────────────────────────
+    # ── Guardar stats para el feedback (fuera del with) ────
+    st.session_state.fb_total   = total
+    st.session_state.fb_n_ok    = n_ok
+    st.session_state.fb_n_fallo = n_fallo
+
+# ── Ko-fi footer ─────────────────────────────────────────────
+st.markdown("""
+<div class="kofi-banner" style="border-color:#fb923c; padding:1.1rem 1.4rem;">
+    <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.5rem;">
+        Esta app tiene un costo real de API. Si te ahorró tiempo:
+    </div>
+    <a href="https://ko-fi.com/analyzethis" target="_blank"
+       style="color:#fb923c; font-weight:700; font-size:1rem; text-decoration:none;">
+        ☕ Invítame un café en Ko-fi
+    </a>
+    <div style="font-size:0.75rem; color:#475569; margin-top:0.4rem;">Gracias 🙏</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Feedback (fuera del with tmpdir — sobrevive reruns de Streamlit) ──
+# Solo se muestra si ya se procesaron archivos en esta sesión
+if "fb_total" in st.session_state:
     SHEETS_WEBHOOK = st.secrets.get("SHEETS_WEBHOOK_URL", None)
 
-    # session_state evita que el re-render de st.feedback colapse el text_area
     if "fb_enviado" not in st.session_state:
         st.session_state.fb_enviado = False
 
@@ -671,12 +691,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
     if st.session_state.fb_enviado:
         st.success("¡Gracias por tu feedback! 🙏")
     else:
-        # st.feedback recarga la página al seleccionar → guardamos en session_state
         estrellas_raw = st.feedback("stars", key="rating")
         if estrellas_raw is not None:
             st.session_state.fb_estrellas = estrellas_raw + 1  # 0-4 → 1-5
 
-        comentario = st.text_area(
+        st.text_area(
             "Comentario (opcional)",
             placeholder="Ej: los archivos rotados igual salieron mal / todo perfecto / faltaría que...",
             max_chars=500,
@@ -697,9 +716,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
                         "timestamp"  : time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
                         "estrellas"  : estrellas_val,
                         "comentario" : st.session_state.get("fb_comentario", "").strip() or "—",
-                        "archivos"   : total,
-                        "ok"         : n_ok,
-                        "fallos"     : n_fallo,
+                        "archivos"   : st.session_state.fb_total,
+                        "ok"         : st.session_state.fb_n_ok,
+                        "fallos"     : st.session_state.fb_n_fallo,
                     }).encode("utf-8")
                     req = urllib.request.Request(
                         SHEETS_WEBHOOK,
@@ -713,18 +732,3 @@ with tempfile.TemporaryDirectory() as tmpdir:
                     st.rerun()
                 except Exception as e:
                     st.warning(f"No se pudo enviar el feedback: {e}")
-
-
-    # ── Ko-fi footer ──────────────────────────────────────────
-    st.markdown("""
-    <div class="kofi-banner" style="border-color:#fb923c; padding:1.1rem 1.4rem;">
-        <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.5rem;">
-            Esta app tiene un costo real de API. Si te ahorró tiempo:
-        </div>
-        <a href="https://ko-fi.com/analyzethis" target="_blank"
-           style="color:#fb923c; font-weight:700; font-size:1rem; text-decoration:none;">
-            ☕ Invítame un café en Ko-fi
-        </a>
-        <div style="font-size:0.75rem; color:#475569; margin-top:0.4rem;">Gracias 🙏</div>
-    </div>
-    """, unsafe_allow_html=True)
