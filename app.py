@@ -657,6 +657,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # ── Feedback ──────────────────────────────────────────────
     SHEETS_WEBHOOK = st.secrets.get("SHEETS_WEBHOOK_URL", None)
 
+    # session_state evita que el re-render de st.feedback colapse el text_area
+    if "fb_enviado" not in st.session_state:
+        st.session_state.fb_enviado = False
+
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
     st.markdown("""
     <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.8rem;">
@@ -664,41 +668,52 @@ with tempfile.TemporaryDirectory() as tmpdir:
     </div>
     """, unsafe_allow_html=True)
 
-    estrellas = st.feedback("stars", key="rating")
+    if st.session_state.fb_enviado:
+        st.success("¡Gracias por tu feedback! 🙏")
+    else:
+        # st.feedback recarga la página al seleccionar → guardamos en session_state
+        estrellas_raw = st.feedback("stars", key="rating")
+        if estrellas_raw is not None:
+            st.session_state.fb_estrellas = estrellas_raw + 1  # 0-4 → 1-5
 
-    comentario = st.text_area(
-        "Comentario (opcional)",
-        placeholder="Ej: los archivos rotados igual salieron mal / todo perfecto / faltaría que...",
-        max_chars=500,
-        label_visibility="collapsed",
-    )
+        comentario = st.text_area(
+            "Comentario (opcional)",
+            placeholder="Ej: los archivos rotados igual salieron mal / todo perfecto / faltaría que...",
+            max_chars=500,
+            label_visibility="collapsed",
+            key="fb_comentario",
+        )
 
-    if st.button("Enviar feedback", use_container_width=False):
-        if estrellas is None:
-            st.warning("Selecciona al menos una estrella antes de enviar.")
-        elif not SHEETS_WEBHOOK:
-            st.info("Feedback registrado localmente (webhook no configurado).")
-        else:
-            try:
-                payload = json.dumps({
-                    "timestamp"  : time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-                    "estrellas"  : estrellas + 1,   # st.feedback devuelve 0-4
-                    "comentario" : comentario.strip() or "—",
-                    "archivos"   : total,
-                    "ok"         : n_ok,
-                    "fallos"     : n_fallo,
-                }).encode("utf-8")
-                req = urllib.request.Request(
-                    SHEETS_WEBHOOK,
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    _ = resp.read()
-                st.success("¡Gracias por tu feedback! 🙏")
-            except Exception as e:
-                st.warning(f"No se pudo enviar el feedback: {e}")
+        if st.button("Enviar feedback", use_container_width=False):
+            estrellas_val = st.session_state.get("fb_estrellas", None)
+            if estrellas_val is None:
+                st.warning("Selecciona al menos una estrella antes de enviar.")
+            elif not SHEETS_WEBHOOK:
+                st.session_state.fb_enviado = True
+                st.rerun()
+            else:
+                try:
+                    payload = json.dumps({
+                        "timestamp"  : time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                        "estrellas"  : estrellas_val,
+                        "comentario" : st.session_state.get("fb_comentario", "").strip() or "—",
+                        "archivos"   : total,
+                        "ok"         : n_ok,
+                        "fallos"     : n_fallo,
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        SHEETS_WEBHOOK,
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        _ = resp.read()
+                    st.session_state.fb_enviado = True
+                    st.rerun()
+                except Exception as e:
+                    st.warning(f"No se pudo enviar el feedback: {e}")
+
 
     # ── Ko-fi footer ──────────────────────────────────────────
     st.markdown("""
