@@ -674,7 +674,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Feedback (fuera del with tmpdir — sobrevive reruns de Streamlit) ──
-# Solo se muestra si ya se procesaron archivos en esta sesión
+# Estrellas implementadas en HTML puro para evitar el rerun de st.feedback
 if "fb_total" in st.session_state:
     SHEETS_WEBHOOK = st.secrets.get("SHEETS_WEBHOOK_URL", None)
 
@@ -682,20 +682,39 @@ if "fb_total" in st.session_state:
         st.session_state.fb_enviado = False
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style="font-size:0.85rem; color:#94a3b8; margin-bottom:0.8rem;">
-        ¿Te funcionó? Tu opinión ayuda a mejorar la app.
-    </div>
-    """, unsafe_allow_html=True)
 
     if st.session_state.fb_enviado:
         st.success("¡Gracias por tu feedback! 🙏")
     else:
-        estrellas_raw = st.feedback("stars", key="rating")
-        if estrellas_raw is not None:
-            st.session_state.fb_estrellas = estrellas_raw + 1  # 0-4 → 1-5
+        # Estrellas HTML — no disparan rerun, valor viaja como query param al enviar
+        st.markdown("""
+        <div style="margin-bottom:0.5rem; font-size:0.85rem; color:#94a3b8;">
+            ¿Te funcionó? Tu opinión ayuda a mejorar la app.
+        </div>
+        <div style="display:flex; gap:6px; margin-bottom:0.8rem;" id="star-row">
+            <span style="font-size:1.8rem; cursor:pointer; color:#475569;"
+                  onclick="selectStar(1)" id="s1">★</span>
+            <span style="font-size:1.8rem; cursor:pointer; color:#475569;"
+                  onclick="selectStar(2)" id="s2">★</span>
+            <span style="font-size:1.8rem; cursor:pointer; color:#475569;"
+                  onclick="selectStar(3)" id="s3">★</span>
+            <span style="font-size:1.8rem; cursor:pointer; color:#475569;"
+                  onclick="selectStar(4)" id="s4">★</span>
+            <span style="font-size:1.8rem; cursor:pointer; color:#475569;"
+                  onclick="selectStar(5)" id="s5">★</span>
+        </div>
+        <input type="hidden" id="star-value" value="0">
+        <script>
+        function selectStar(n) {
+            document.getElementById("star-value").value = n;
+            for (let i = 1; i <= 5; i++) {
+                document.getElementById("s"+i).style.color = i <= n ? "#facc15" : "#475569";
+            }
+        }
+        </script>
+        """, unsafe_allow_html=True)
 
-        st.text_area(
+        comentario = st.text_area(
             "Comentario (opcional)",
             placeholder="Ej: los archivos rotados igual salieron mal / todo perfecto / faltaría que...",
             max_chars=500,
@@ -703,9 +722,40 @@ if "fb_total" in st.session_state:
             key="fb_comentario",
         )
 
+        # Campo oculto para pasar el valor de estrellas: usamos un number_input oculto
+        # vía CSS — el usuario mueve las estrellas HTML y un JS sincroniza este input
+        st.markdown("""
+        <script>
+        // Sincroniza el valor HTML con el número oculto de Streamlit
+        // El componente number_input tiene data-testid predecible
+        function syncStars() {
+            const val = parseInt(document.getElementById("star-value").value) || 0;
+            const inputs = window.parent.document.querySelectorAll(
+                '[data-testid="stNumberInput"] input'
+            );
+            if (inputs.length > 0) {
+                const nativeInput = inputs[inputs.length - 1];
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, "value").set;
+                nativeInputValueSetter.call(nativeInput, val);
+                nativeInput.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+        }
+        // Parchamos selectStar para también sincronizar
+        const _orig = window.selectStar;
+        window.selectStar = function(n) { _orig(n); syncStars(); };
+        </script>
+        """, unsafe_allow_html=True)
+
+        estrellas_val = st.number_input(
+            "estrellas_hidden",
+            min_value=0, max_value=5, value=0, step=1,
+            label_visibility="hidden",
+            key="fb_estrellas_input",
+        )
+
         if st.button("Enviar feedback", use_container_width=False):
-            estrellas_val = st.session_state.get("fb_estrellas", None)
-            if estrellas_val is None:
+            if estrellas_val == 0:
                 st.warning("Selecciona al menos una estrella antes de enviar.")
             elif not SHEETS_WEBHOOK:
                 st.session_state.fb_enviado = True
@@ -714,7 +764,7 @@ if "fb_total" in st.session_state:
                 try:
                     payload = json.dumps({
                         "timestamp"  : time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-                        "estrellas"  : estrellas_val,
+                        "estrellas"  : int(estrellas_val),
                         "comentario" : st.session_state.get("fb_comentario", "").strip() or "—",
                         "archivos"   : st.session_state.fb_total,
                         "ok"         : st.session_state.fb_n_ok,
@@ -732,3 +782,4 @@ if "fb_total" in st.session_state:
                     st.rerun()
                 except Exception as e:
                     st.warning(f"No se pudo enviar el feedback: {e}")
+
