@@ -434,147 +434,176 @@ col_btn, col_info = st.columns([3, 1])
 with col_btn:
     iniciar = st.button("🚀 Renombrar documentos", type="primary", use_container_width=True)
 
-if not iniciar:
-    st.stop()
+# ── Procesamiento: corre UNA VEZ, guarda todo en session_state ───────────────
+# En reruns (descarga, estrellas, enviar feedback) Streamlit vuelve a ejecutar
+# el script desde el inicio. La clave es NO reprocesar — solo leer session_state.
 
-client_ai = anthropic.Anthropic(api_key=api_key)
+if iniciar:
+    # Limpiar estado anterior si el usuario sube nuevos archivos
+    for k in ["fb_zip_bytes","fb_csv_bytes","fb_total","fb_n_ok","fb_n_fallo",
+              "fb_log","fb_enviado","fb_estrellas","fb_estrellas_input","fb_comentario"]:
+        st.session_state.pop(k, None)
 
-with tempfile.TemporaryDirectory() as tmpdir:
-    pdf_dir = os.path.join(tmpdir, 'pdfs')
-    out_dir = os.path.join(tmpdir, 'out')
-    os.makedirs(pdf_dir); os.makedirs(out_dir)
+    client_ai = anthropic.Anthropic(api_key=api_key)
 
-    # ── Extraer PDFs (detección automática por extensión) ─────
-    pdfs = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_dir = os.path.join(tmpdir, 'pdfs')
+        out_dir = os.path.join(tmpdir, 'out')
+        os.makedirs(pdf_dir); os.makedirs(out_dir)
 
-    def extraer_msg(msg_path, pdf_dir):
-        """Extrae todos los PDFs adjuntos de un .msg."""
-        encontrados = []
-        try:
-            msg = extract_msg.Message(msg_path)
-            for att in msg.attachments:
-                fname = att.longFilename or att.shortFilename or 'adjunto.pdf'
-                if fname.lower().endswith('.pdf'):
-                    fp_pdf = os.path.join(pdf_dir, fname)
-                    c = 1
-                    while os.path.exists(fp_pdf):
-                        base2, ext2 = os.path.splitext(fname)
-                        fp_pdf = os.path.join(pdf_dir, f'{base2}_{c}{ext2}')
-                        c += 1
-                    with open(fp_pdf, 'wb') as fout:
-                        fout.write(att.data)
-                    encontrados.append(fp_pdf)
-        except Exception as e:
-            st.warning(f"⚠️ Error leyendo MSG: {e}")
-        return encontrados
+        pdfs = []
 
-    for f in archivos:
-        ext_f = f.name.lower().rsplit('.', 1)[-1]
-        raw_path = os.path.join(tmpdir, f.name)
-        with open(raw_path, 'wb') as fp:
-            fp.write(f.read())
-
-        if ext_f == 'pdf':
-            dest = os.path.join(pdf_dir, f.name)
-            shutil.copy2(raw_path, dest)
-            pdfs.append(dest)
-
-        elif ext_f == 'msg':
-            pdfs.extend(extraer_msg(raw_path, pdf_dir))
-
-        elif ext_f == 'zip':
+        def extraer_msg(msg_path, pdf_dir):
+            """Extrae todos los PDFs adjuntos de un .msg."""
+            encontrados = []
             try:
-                with zipfile.ZipFile(raw_path, 'r') as zf:
-                    for nombre_zip in zf.namelist():
-                        base_zip = os.path.basename(nombre_zip)
-                        # Ignorar archivos ocultos de macOS (._*, __MACOSX/, .DS_Store, etc.)
-                        if not base_zip or base_zip.startswith('._') or base_zip.startswith('.') or '__MACOSX' in nombre_zip:
-                            continue
-                        ext_zip = nombre_zip.lower().rsplit('.', 1)[-1]
-                        if ext_zip == 'pdf':
-                            datos_zip = zf.read(nombre_zip)
-                            base_name = os.path.basename(nombre_zip) or nombre_zip
-                            dest = os.path.join(pdf_dir, base_name)
-                            c = 1
-                            while os.path.exists(dest):
-                                b, e = os.path.splitext(base_name)
-                                dest = os.path.join(pdf_dir, f'{b}_{c}{e}')
-                                c += 1
-                            with open(dest, 'wb') as fp:
-                                fp.write(datos_zip)
-                            pdfs.append(dest)
-                        elif ext_zip == 'msg':
-                            datos_zip = zf.read(nombre_zip)
-                            base_name = os.path.basename(nombre_zip) or nombre_zip
-                            msg_temp = os.path.join(tmpdir, base_name)
-                            with open(msg_temp, 'wb') as fp:
-                                fp.write(datos_zip)
-                            pdfs.extend(extraer_msg(msg_temp, pdf_dir))
+                msg = extract_msg.Message(msg_path)
+                for att in msg.attachments:
+                    fname = att.longFilename or att.shortFilename or 'adjunto.pdf'
+                    if fname.lower().endswith('.pdf'):
+                        fp_pdf = os.path.join(pdf_dir, fname)
+                        c = 1
+                        while os.path.exists(fp_pdf):
+                            base2, ext2 = os.path.splitext(fname)
+                            fp_pdf = os.path.join(pdf_dir, f'{base2}_{c}{ext2}')
+                            c += 1
+                        with open(fp_pdf, 'wb') as fout:
+                            fout.write(att.data)
+                        encontrados.append(fp_pdf)
             except Exception as e:
-                st.warning(f"⚠️ Error leyendo ZIP {f.name}: {e}")
+                st.warning(f"⚠️ Error leyendo MSG: {e}")
+            return encontrados
 
-    total = len(pdfs)
-    if total == 0:
-        st.error("No se encontraron PDFs para procesar.")
-        st.stop()
+        for f in archivos:
+            ext_f = f.name.lower().rsplit('.', 1)[-1]
+            raw_path = os.path.join(tmpdir, f.name)
+            with open(raw_path, 'wb') as fp:
+                fp.write(f.read())
 
-    st.markdown(f'<div class="limit-note">⏳ Procesando {total} documento(s)…</div>', unsafe_allow_html=True)
+            if ext_f == 'pdf':
+                dest = os.path.join(pdf_dir, f.name)
+                shutil.copy2(raw_path, dest)
+                pdfs.append(dest)
 
-    # ── Procesar ──────────────────────────────────────────────
-    log = []
-    progress = st.progress(0)
-    status   = st.empty()
-    tokens_total = 0
+            elif ext_f == 'msg':
+                pdfs.extend(extraer_msg(raw_path, pdf_dir))
 
-    for i, pdf_path in enumerate(pdfs):
-        nombre_orig = os.path.basename(pdf_path)
-        status.markdown(f"<span style='color:#64748b; font-size:0.82rem; font-family:monospace;'>⏳ {nombre_orig} ({i+1}/{total})</span>", unsafe_allow_html=True)
+            elif ext_f == 'zip':
+                try:
+                    with zipfile.ZipFile(raw_path, 'r') as zf:
+                        for nombre_zip in zf.namelist():
+                            base_zip = os.path.basename(nombre_zip)
+                            if not base_zip or base_zip.startswith('._') or base_zip.startswith('.') or '__MACOSX' in nombre_zip:
+                                continue
+                            ext_zip = nombre_zip.lower().rsplit('.', 1)[-1]
+                            if ext_zip == 'pdf':
+                                datos_zip = zf.read(nombre_zip)
+                                base_name = os.path.basename(nombre_zip) or nombre_zip
+                                dest = os.path.join(pdf_dir, base_name)
+                                c = 1
+                                while os.path.exists(dest):
+                                    b, e = os.path.splitext(base_name)
+                                    dest = os.path.join(pdf_dir, f'{b}_{c}{e}')
+                                    c += 1
+                                with open(dest, 'wb') as fp:
+                                    fp.write(datos_zip)
+                                pdfs.append(dest)
+                            elif ext_zip == 'msg':
+                                datos_zip = zf.read(nombre_zip)
+                                base_name = os.path.basename(nombre_zip) or nombre_zip
+                                msg_temp = os.path.join(tmpdir, base_name)
+                                with open(msg_temp, 'wb') as fp:
+                                    fp.write(datos_zip)
+                                pdfs.extend(extraer_msg(msg_temp, pdf_dir))
+                except Exception as e:
+                    st.warning(f"⚠️ Error leyendo ZIP {f.name}: {e}")
 
-        try:
-            img_b64, rotacion = pdf_primera_pagina_base64(pdf_path)
-            datos   = clasificar(client_ai, img_b64)
+        total = len(pdfs)
+        if total == 0:
+            st.error("No se encontraron PDFs para procesar.")
+            st.stop()
 
-            if datos is None:
+        st.markdown(f'<div class="limit-note">⏳ Procesando {total} documento(s)…</div>', unsafe_allow_html=True)
+
+        log = []
+        progress = st.progress(0)
+        status   = st.empty()
+        tokens_total = 0
+
+        for i, pdf_path in enumerate(pdfs):
+            nombre_orig = os.path.basename(pdf_path)
+            status.markdown(f"<span style='color:#64748b; font-size:0.82rem; font-family:monospace;'>⏳ {nombre_orig} ({i+1}/{total})</span>", unsafe_allow_html=True)
+
+            try:
+                img_b64, rotacion = pdf_primera_pagina_base64(pdf_path)
+                datos = clasificar(client_ai, img_b64)
+
+                if datos is None:
+                    nuevo = f'REVISAR_{nombre_orig}'
+                    shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
+                    log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': 'FALLIDO'})
+                else:
+                    tokens_total += datos.get('_tokens', 0)
+                    nuevo_nombre  = generar_nombre(datos)
+                    dest = os.path.join(out_dir, nuevo_nombre)
+                    c = 1
+                    while os.path.exists(dest):
+                        base3 = nuevo_nombre.replace('.pdf', '')
+                        dest = os.path.join(out_dir, f'{base3}_{c}.pdf')
+                        c += 1
+                    shutil.copy2(pdf_path, dest)
+                    log.append({
+                        'original' : nombre_orig,
+                        'nuevo'    : os.path.basename(dest),
+                        'datos'    : datos,
+                        'estado'   : 'OK',
+                        'confianza': datos.get('confianza', 'ALTA'),
+                        'tipo'     : datos.get('tipo', ''),
+                        'rotacion' : rotacion,
+                    })
+
+            except Exception as e:
                 nuevo = f'REVISAR_{nombre_orig}'
                 shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
-                log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': 'FALLIDO'})
-            else:
-                tokens_total += datos.get('_tokens', 0)
-                nuevo_nombre  = generar_nombre(datos)
+                log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': f'ERROR: {str(e)[:80]}'})
 
-                # Evitar duplicados
-                dest = os.path.join(out_dir, nuevo_nombre)
-                c = 1
-                while os.path.exists(dest):
-                    base3 = nuevo_nombre.replace('.pdf', '')
-                    dest = os.path.join(out_dir, f'{base3}_{c}.pdf')
-                    c += 1
-                shutil.copy2(pdf_path, dest)
+            progress.progress((i + 1) / total)
+            time.sleep(0.8)
 
-                log.append({
-                    'original' : nombre_orig,
-                    'nuevo'    : os.path.basename(dest),
-                    'datos'    : datos,
-                    'estado'   : 'OK',
-                    'confianza': datos.get('confianza', 'ALTA'),
-                    'tipo'     : datos.get('tipo', ''),
-                    'rotacion' : rotacion,
-                })
+        status.empty()
+        progress.empty()
 
-        except Exception as e:
-            nuevo = f'REVISAR_{nombre_orig}'
-            shutil.copy2(pdf_path, os.path.join(out_dir, nuevo))
-            log.append({'original': nombre_orig, 'nuevo': nuevo, 'estado': f'ERROR: {str(e)[:80]}'})
+        n_ok    = sum(1 for r in log if r['estado'] == 'OK')
+        n_fallo = sum(1 for r in log if r['estado'] != 'OK')
 
-        progress.progress((i + 1) / total)
-        time.sleep(0.8)
+        # ── Construir ZIP en memoria ──────────────────────────
+        zip_buffer = __import__('io').BytesIO()
+        csv_lines = ["original,nuevo,tipo,confianza,estado"]
+        for r in log:
+            tipo_c = r.get('tipo', '').replace(',', ';')
+            conf_c = r.get('confianza', '')
+            csv_lines.append(f'"{r["original"]}","{r.get("nuevo","")}","{tipo_c}","{conf_c}","{r["estado"]}"')
+        with zipfile.ZipFile(zip_buffer, 'w') as zf:
+            for archivo in os.listdir(out_dir):
+                zf.write(os.path.join(out_dir, archivo), archivo)
+            zf.writestr('_log_renombrado.csv', '\n'.join(csv_lines))
 
-    status.empty()
-    progress.empty()
+        # ── Guardar TODO en session_state antes de que tmpdir se borre ──
+        st.session_state.fb_zip_bytes  = zip_buffer.getvalue()
+        st.session_state.fb_csv_bytes  = '\n'.join(csv_lines).encode('utf-8')
+        st.session_state.fb_log        = log
+        st.session_state.fb_total      = total
+        st.session_state.fb_n_ok       = n_ok
+        st.session_state.fb_n_fallo    = n_fallo
+        st.session_state.fb_tokens     = tokens_total
 
-    # ── Estadísticas ──────────────────────────────────────────
-    n_ok    = sum(1 for r in log if r['estado'] == 'OK')
-    n_fallo = sum(1 for r in log if r['estado'] != 'OK')
+# ── Mostrar resultados (desde session_state — siempre disponible) ─────────────
+if "fb_zip_bytes" in st.session_state:
+    log          = st.session_state.fb_log
+    n_ok         = st.session_state.fb_n_ok
+    n_fallo      = st.session_state.fb_n_fallo
+    total        = st.session_state.fb_total
+    tokens_total = st.session_state.fb_tokens
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
@@ -588,7 +617,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Resultados ────────────────────────────────────────────
     st.markdown("### Resultados")
     for r in log:
         if r['estado'] == 'OK':
@@ -596,13 +624,13 @@ with tempfile.TemporaryDirectory() as tmpdir:
         else:
             badge, cls = '❌', 'badge-err'
 
-        tipo_str   = r.get('tipo', '')
-        confianza  = r.get('confianza', '')
-        rotacion   = r.get('rotacion', 0)
+        tipo_str  = r.get('tipo', '')
+        confianza = r.get('confianza', '')
+        rotacion  = r.get('rotacion', 0)
         conf_color = {'ALTA': '#4ade80', 'MEDIA': '#facc15', 'BAJA': '#f87171'}.get(confianza, '#475569')
-        conf_html  = f'&nbsp;<span style="color:{conf_color}; font-size:0.7rem;">⬤ {confianza}</span>' if confianza else ''
-        tipo_html  = f'&nbsp;·&nbsp;<span style="color:#94a3b8">{tipo_str}</span>' if tipo_str else ''
-        rot_html   = f'&nbsp;·&nbsp;<span style="color:#f59e0b; font-size:0.7rem;" title="Rotación embebida corregida">↻ {rotacion}°</span>' if rotacion else ''
+        conf_html = f'&nbsp;<span style="color:{conf_color}; font-size:0.7rem;">⬤ {confianza}</span>' if confianza else ''
+        tipo_html = f'&nbsp;·&nbsp;<span style="color:#94a3b8">{tipo_str}</span>' if tipo_str else ''
+        rot_html  = f'&nbsp;·&nbsp;<span style="color:#f59e0b; font-size:0.7rem;" title="Rotación embebida corregida">↻ {rotacion}°</span>' if rotacion else ''
 
         st.markdown(f"""
         <div class="result-row">
@@ -614,36 +642,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── CSV de log ────────────────────────────────────────────
-    csv_lines = ["original,nuevo,tipo,confianza,estado"]
-    for r in log:
-        tipo_c = r.get('tipo', '').replace(',', ';')
-        conf_c = r.get('confianza', '')
-        csv_lines.append(f'"{r["original"]}","{r.get("nuevo","")}","{tipo_c}","{conf_c}","{r["estado"]}"')
-    csv_bytes = '\n'.join(csv_lines).encode('utf-8')
-
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── ZIP → session_state (persiste entre reruns) ─────────
-    zip_path = os.path.join(tmpdir, 'documentos_renombrados.zip')
-    with zipfile.ZipFile(zip_path, 'w') as zf:
-        for archivo in os.listdir(out_dir):
-            zf.write(os.path.join(out_dir, archivo), archivo)
-        zf.writestr('_log_renombrado.csv', '\n'.join(csv_lines))
-
-    with open(zip_path, 'rb') as f:
-        st.session_state.fb_zip_bytes = f.read()
-
-    st.session_state.fb_csv_bytes = csv_bytes
-
-    # ── Guardar stats para el feedback (fuera del with) ────
-    st.session_state.fb_total   = total
-    st.session_state.fb_n_ok    = n_ok
-    st.session_state.fb_n_fallo = n_fallo
-
-# ── Descarga (fuera del with tmpdir — sobrevive reruns) ─────
-if "fb_zip_bytes" in st.session_state:
-    st.markdown("<br>", unsafe_allow_html=True)
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         st.download_button(
@@ -664,6 +664,8 @@ if "fb_zip_bytes" in st.session_state:
             use_container_width=True,
             key="dl_csv",
         )
+
+
 
 # ── Ko-fi footer ─────────────────────────────────────────────
 st.markdown("""
