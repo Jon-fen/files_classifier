@@ -624,40 +624,46 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── ZIP y descarga ────────────────────────────────────────
+    # ── ZIP → session_state (persiste entre reruns) ─────────
     zip_path = os.path.join(tmpdir, 'documentos_renombrados.zip')
     with zipfile.ZipFile(zip_path, 'w') as zf:
         for archivo in os.listdir(out_dir):
             zf.write(os.path.join(out_dir, archivo), archivo)
-        # Incluir CSV de log dentro del ZIP
         zf.writestr('_log_renombrado.csv', '\n'.join(csv_lines))
 
     with open(zip_path, 'rb') as f:
-        zip_bytes = f.read()
+        st.session_state.fb_zip_bytes = f.read()
 
-    col_dl1, col_dl2 = st.columns(2)
-    with col_dl1:
-        st.download_button(
-            label="📦 Descargar PDFs renombrados (.zip)",
-            data=zip_bytes,
-            file_name="documentos_renombrados.zip",
-            mime="application/zip",
-            use_container_width=True,
-            type="primary"
-        )
-    with col_dl2:
-        st.download_button(
-            label="📋 Descargar log (.csv)",
-            data=csv_bytes,
-            file_name="log_renombrado.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+    st.session_state.fb_csv_bytes = csv_bytes
 
     # ── Guardar stats para el feedback (fuera del with) ────
     st.session_state.fb_total   = total
     st.session_state.fb_n_ok    = n_ok
     st.session_state.fb_n_fallo = n_fallo
+
+# ── Descarga (fuera del with tmpdir — sobrevive reruns) ─────
+if "fb_zip_bytes" in st.session_state:
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="📦 Descargar PDFs renombrados (.zip)",
+            data=st.session_state.fb_zip_bytes,
+            file_name="documentos_renombrados.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary",
+            key="dl_zip",
+        )
+    with col_dl2:
+        st.download_button(
+            label="📋 Descargar log (.csv)",
+            data=st.session_state.fb_csv_bytes,
+            file_name="log_renombrado.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_csv",
+        )
 
 # ── Ko-fi footer ─────────────────────────────────────────────
 st.markdown("""
