@@ -718,7 +718,7 @@ if "fb_total" in st.session_state:
         )
 
         if st.button("Enviar feedback", use_container_width=False):
-            estrellas_val = int(nota[0])  # primer carácter es el número
+            estrellas_val = int(re.search(r"\d", nota).group())
             if not SHEETS_WEBHOOK:
                 st.session_state.fb_enviado = True
                 st.rerun()
