@@ -157,9 +157,15 @@ with st.sidebar:
 
     # Límite
     LIMITE_ARCHIVOS = st.slider(
-        "Límite de archivos por sesión",
+        "Archivos individuales por sesión (máx. 50)",
         min_value=5, max_value=50, value=30, step=5
     )
+    st.markdown("""
+    <div style="font-size:0.70rem; color:#475569; margin-top:-0.5rem; line-height:1.5;">
+        Aplica a archivos directos.<br>
+        ZIPs y MSGs pueden contener hasta <strong style="color:#64748b;">200 PDFs</strong> en total.
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -223,7 +229,7 @@ if not api_key:
     st.stop()
 
 # ── Upload ────────────────────────────────────────────────────
-st.markdown(f'<div class="limit-note">📁 Sube hasta <strong>{LIMITE_ARCHIVOS} archivos</strong> · PDF, MSG o ZIP por sesión</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="limit-note">📁 Hasta <strong>{LIMITE_ARCHIVOS} archivos individuales</strong> · o ZIPs/MSGs con hasta <strong>200 PDFs</strong> en total · PDF · MSG · ZIP</div>', unsafe_allow_html=True)
 
 archivos = st.file_uploader(
     "Arrastra o selecciona archivos",
@@ -269,10 +275,6 @@ if not archivos:
         ↑ Sube archivos para comenzar
     </div>
     """, unsafe_allow_html=True)
-    st.stop()
-
-if len(archivos) > LIMITE_ARCHIVOS:
-    st.error(f"❌ Subiste {len(archivos)} archivos. El límite configurado es {LIMITE_ARCHIVOS}.")
     st.stop()
 
 st.success(f"✅ {len(archivos)} archivo(s) cargados — listos para clasificar")
@@ -521,6 +523,10 @@ if iniciar:
         total = len(pdfs)
         if total == 0:
             st.error("No se encontraron PDFs para procesar.")
+            st.stop()
+        LIMITE_EXTRAIDOS = 200
+        if total > LIMITE_EXTRAIDOS:
+            st.error(f"❌ Se encontraron {total} PDFs tras descomprimir (límite: {LIMITE_EXTRAIDOS}). Divide el lote en varias sesiones.")
             st.stop()
 
         st.markdown(f'<div class="limit-note">⏳ Procesando {total} documento(s)…</div>', unsafe_allow_html=True)
