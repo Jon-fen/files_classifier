@@ -590,7 +590,7 @@ if iniciar:
 
         # ── Guardar TODO en session_state antes de que tmpdir se borre ──
         st.session_state.fb_zip_bytes  = zip_buffer.getvalue()
-        st.session_state.fb_csv_bytes  = '\n'.join(csv_lines).encode('utf-8')
+        st.session_state.fb_csv_bytes  = '\n'.join(csv_lines).encode('utf-8-sig')  # BOM para Excel
         st.session_state.fb_log        = log
         st.session_state.fb_total      = total
         st.session_state.fb_n_ok       = n_ok
